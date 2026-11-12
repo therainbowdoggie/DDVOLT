@@ -1,59 +1,78 @@
 # DD Volt — strona firmowa
 
-Statyczna strona (HTML + CSS + JS, bez frameworków) gotowa pod GitHub Pages.
+Statyczna strona (HTML + CSS + JS, bez frameworków i bez zewnętrznych zasobów) w dwóch językach:
+polski w katalogu głównym, angielski w `/en/`. Gotowa pod GitHub Pages.
 
-## Publikacja na GitHub Pages
+## Wgranie na GitHub
 
-1. Utwórz repozytorium na GitHubie (np. `ddvolt-strona`).
-2. Wgraj całą zawartość tego katalogu do gałęzi `main`.
-3. W repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch**, gałąź `main`, katalog `/ (root)`. Zapisz.
-4. Po 1–2 minutach strona działa pod `https://<login>.github.io/<nazwa-repo>/`.
-5. Własna domena: **Settings → Pages → Custom domain**, wpisz np. `ddvolt.pl` i ustaw rekordy DNS według instrukcji GitHuba.
+Podmień całą zawartość repozytorium na pliki z tej paczki. Jeśli wgrywasz przez przeglądarkę
+(„Add file → Upload files”), usuń najpierw stare rzeczy, których nowa wersja już nie używa:
 
-Plik `.nojekyll` wyłącza przetwarzanie Jekyll (nie jest potrzebne).
+- katalog `ddvolt/` (przypadkowa kopia całej strony),
+- katalog `vendor/` (Leaflet; mapa jest teraz własna, w SVG),
+- plik `css/fonts.css` i stare fonty w `assets/fonts/` (Bricolage Grotesque, Instrument Sans, IBM Plex Mono).
 
-## Struktura
+## Do uzupełnienia przed publikacją
 
-```
-index.html                strona główna (dwie ścieżki: firmy / fachowcy)
-oferta.html               oferta + branże + proces
-realizacje.html           mapa interaktywna + case study
-o-nas.html                historia, zasady, liczby
-kariera.html              oferty pracy + FAQ dla fachowców
-faq.html                  FAQ (zestaw zależny od ścieżki)
-kontakt.html              formularz + dane kontaktowe
-polityka-prywatnosci.html
-polityka-cookies.html
-css/style.css             tokeny i komponenty (design system v1)
-js/main.js                przełącznik ścieżki, animacje, liczniki, FAQ, formularz, motyw
-js/map.js                 mapa realizacji (Leaflet + kafle CARTO) i DANE PROJEKTÓW
-assets/favicon.svg
-tools/build.py            generator stron — edytuj treść tutaj i uruchom `python3 tools/build.py`
-```
+Wszystko poniżej zmienia się w `tools/content.py`, a potem `python3 tools/build.py`.
 
-## Co trzeba uzupełnić przed publikacją
-
-- **Telefon i e-mail** — w `tools/build.py` (stałe `PHONE`, `PHONE_HREF`, `EMAIL`), potem `python3 tools/build.py`. Albo podmień ręcznie w plikach HTML (`+48 000 000 000`, `kontakt@ddvolt.pl`).
-- **Formularz** — załóż darmowe konto na [formspree.io](https://formspree.io), skopiuj ID formularza i wpisz w `FORM_ACTION` (zamiast `TWOJ_ID`). Bez tego formularz pokaże komunikat, że nie jest podpięty.
-- **Zdjęcia** — wszystkie kafle „Zdjęcie z realizacji" to zaślepki. Wrzuć zdjęcia do `assets/` i dodaj `<img>` w karcie (`.project .photo`) albo w hero (`.hero-art`).
-- **Dane na mapie** — `js/map.js`, tablica `PROJECTS`. Pozycje z dopiskiem `note` mają lokalizację do potwierdzenia (Tesla, Microsoft, szkoły). Współrzędne: miasto.
-- **Dane administratora** w polityce prywatności (nazwa, adres, NIP).
-- **Nazwa** — „DD Volt" jest robocza. Zmiana: szukaj `DD Volt` w `tools/build.py` i przebuduj.
+| Co | Gdzie | Stan |
+| --- | --- | --- |
+| Formularz | `FORM_ACTION` | Wklej adres z formspree.io. Dopóki jest `TWOJ_ID`, formularz otwiera program pocztowy z gotową wiadomością. |
+| Kraje z realizacjami | `COUNTRIES` | Są cztery: Niemcy, Włochy, Węgry, Polska. Dopisz pozostałe; liczba w statystykach przeliczy się sama. |
+| Liczby | `PROJECTS_COUNT`, `MAIN_PROJECT_MONTHS`, `ROBOTS` | 19+, 12 mies. (Tesla), 130 robotów. Potwierdź 12 miesięcy. |
+| E-mail | `EMAIL` | `kontakt@ddvolt.pl`. Sprawdź domenę (strona działa pod ddvolt.com). |
+| Adres strony | `SITE_URL` | `https://ddvolt.com` (canonical, hreflang, sitemap). |
+| Administrator danych | `T['pl']['privacy']` i `T['en']['privacy']` | W tekście jest znacznik „[uzupełnij: pełna nazwa, adres, NIP]”. |
+| Miasta dwóch projektów | `PROJECTS` → `microsoft`, `szkoly` | Mają `approx: True` (pusta pinezka podpisana „Niemcy”). Podaj miasto i współrzędne, usuń `approx`. |
+| Zdjęcia realizacji | `assets/realizacje/` + pole `img` | Opis w `assets/realizacje/README.md`. |
 
 ## Edycja treści
-
-Najwygodniej przez `tools/build.py` — nagłówek i stopka są w jednym miejscu, treść sekcji w zmiennych (`SERVICES`, `PROJECTS`, `JOBS`, `FAQ_FIRMY`, `FAQ_FACHOWCY`, `STEPS`). Po zmianie:
 
 ```
 python3 tools/build.py
 ```
 
-Pliki HTML można też edytować bezpośrednio; wtedy nie uruchamiaj generatora, bo nadpisze zmiany.
+- `tools/content.py` — cała treść po polsku i angielsku, telefon, e-mail, projekty, oferty pracy, FAQ.
+- `tools/build.py` — szablony stron. Generuje wszystkie pliki `*.html`, `en/*.html`, `404.html`, `sitemap.xml`, `robots.txt`.
+- Plików HTML nie edytuj ręcznie: generator je nadpisuje.
+
+Nowy projekt na mapie: dopisz pozycję w `PROJECTS` (klient, zakres, branża, kod kraju, szerokość i długość
+geograficzna). Pinezka, karta i linia połączenia powstaną same. Nowy kraj dopisz też w `COUNTRIES`.
+
+## Struktura
+
+```
+index.html, oferta.html, realizacje.html, o-nas.html, kariera.html, faq.html, kontakt.html
+polityka-prywatnosci.html, polityka-cookies.html, 404.html
+en/                       te same strony po angielsku (services, projects, about, careers, faq, contact…)
+css/style.css             tokeny, komponenty, animacje, motyw ciemny
+js/main.js                ekran startowy, ścieżka firmy/fachowcy, menu, animacje, formularz
+js/map.js                 logika mapy realizacji
+js/map-data.js            kontury krajów Europy (plik generowany)
+assets/fonts/             Sofia Sans (zmienny, latin + latin-ext), licencja OFL
+assets/realizacje/        miejsce na zdjęcia projektów
+assets/og.png             grafika udostępniania 1200×630 (szablon: tools/og.html)
+tools/                    generator, treść, projekcja mapy
+sitemap.xml, robots.txt
+```
+
+## Jak to działa
+
+- **Dwie ścieżki**: „Dla firm” i „Dla fachowców”. Wybór zapisuje się w przeglądarce; linki `?dla=fachowcy`
+  (po angielsku `?for=jobs`) ustawiają go z zewnątrz. Oferta zawsze mówi do firm, Kariera do fachowców.
+- **Telefon**: na telefonie link otwiera wybieranie numeru. Na komputerze pierwsze kliknięcie pokazuje numer
+  i kopiuje go do schowka.
+- **Formularz**: wymagane są tylko imię, telefon i zgoda. Niewysłana treść zapisuje się w przeglądarce
+  i wraca po odświeżeniu. „Aplikuj” przy ofercie pracy otwiera formularz z zaznaczonym stanowiskiem.
+- **Mapa**: własny rysunek SVG, bez kafli i kluczy API. Kontury pochodzą z Natural Earth (domena publiczna);
+  `tools/make_map.py` uruchamia się tylko przy zmianie kadru mapy.
+- **Ekran startowy** pokazuje się raz na sesję i znika sam, także gdyby skrypt się nie wczytał.
+- **Bez cookies i analityki**: strona nie pobiera niczego z zewnętrznych serwerów, więc nie ma paska zgód.
+  Jeśli dodasz analitykę, pasek trzeba będzie przywrócić.
+- Działa bez JavaScriptu (treść jest widoczna, FAQ otwiera się natywnie) i szanuje ustawienie
+  „ogranicz ruch” w systemie.
 
 ## Fonty
 
-Bricolage Grotesque (nagłówki), Instrument Sans (tekst), IBM Plex Mono (etykiety) — ładowane z Google Fonts. Jeśli chcesz hostować lokalnie, pobierz pliki WOFF2 i podmień `<link>` w sekcji `<head>` oraz `--font-*` w `css/style.css`.
-
-## Mapa
-
-Leaflet 1.9.4 (unpkg) + kafle CARTO Dark Matter (bez klucza API, darmowe do użytku niekomercyjnego i małego ruchu). Przy dużym ruchu rozważ własny klucz MapTiler/Stadia i podmień adres kafli w `js/map.js`.
+Sofia Sans (Lettersoup), licencja SIL Open Font License 1.1 — tekst w `assets/fonts/OFL.txt`.

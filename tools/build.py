@@ -1,684 +1,983 @@
 #!/usr/bin/env python3
-"""Generator statycznych stron DD Volt.
-Uruchom: python3 tools/build.py  (z katalogu repo). Wynik: pliki *.html w katalogu głównym."""
-import os, pathlib
+"""Generator statycznych stron DD Volt (PL + EN).
+
+Uruchom z katalogu repozytorium:
+    python3 tools/build.py
+Treść i ustawienia są w tools/content.py. Ten plik zawiera tylko szablony."""
+import html, json, pathlib, re, sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import content as C
+import geo
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+LANGS = ('pl', 'en')
 
-# ---------------------------------------------------------------- ikony
-ICO = {
-  'aur': '<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'ar':  '<svg class="arrow-r" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'phone': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="miter"/></svg>',
-  'mail': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM3 6l9 7 9-7" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'pin': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'check': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'alert': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 21h20L12 3zM12 10v5M12 17.5v.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'plus': '<svg class="plus" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'minus': '<svg class="minus" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'menu': '<svg class="ico-menu" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'close': '<svg class="ico-close" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><path d="M5 5l14 14M19 5 5 19" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  'sun': '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" stroke="currentColor" stroke-width="2"/></svg>',
+
+# ---------------------------------------------------------------- pomocnicze
+def esc(s):
+    return html.escape(str(s), quote=False)
+
+
+def attr(s):
+    return html.escape(str(s), quote=True)
+
+
+def typo(s, lang):
+    """Tekst do HTML. Po polsku: twarda spacja po jednoliterowych słowach (a, i, o, u, w, z)."""
+    s = esc(s).replace(' – ', '&nbsp;– ').replace(' — ', '&nbsp;— ')  # myślnik nie zaczyna wiersza
+    s = s.replace('Mercedes-Benz', '<span class="nb">Mercedes-Benz</span>')  # nazwa nie łamie się na łączniku
+    if lang == 'pl':
+        s = re.sub(r'(?<![\w&;])([aiouwzAIOUWZ])\s+', r'\1&nbsp;', s)
+    return s
+
+
+WORDS = re.compile(r' (?![^<]*>)')  # spacje między słowami, ale nie wewnątrz znaczników
+
+
+def split(s, lang):
+    """Nagłówek pocięty na słowa (animacja wejścia). Bez JS wygląda jak zwykły tekst."""
+    words = WORDS.split(typo(s, lang))
+    return ' '.join(f'<span class="w" style="--i:{i}"><span>{w}</span></span>' for i, w in enumerate(words))
+
+
+def lit(s, lang):
+    return ' '.join(f'<span class="lw">{w}</span>' for w in WORDS.split(typo(s, lang)))
+
+
+def loc(v, lang):
+    return v[lang] if isinstance(v, dict) else v
+
+
+def page_file(lang, key):
+    return C.PAGES[key][lang]
+
+
+def href(lang, key):
+    """Link do strony w tym samym języku (pliki jednego języka leżą w jednym katalogu)."""
+    return pathlib.PurePosixPath(page_file(lang, key)).name
+
+
+def alt_href(lang, key):
+    """Link do tej samej strony w drugim języku."""
+    name = pathlib.PurePosixPath(page_file('en' if lang == 'pl' else 'pl', key)).name
+    return ('en/' + name) if lang == 'pl' else ('../' + name)
+
+
+def asset(lang, path):
+    return ('../' if lang == 'en' else '') + path
+
+
+def abs_url(lang, key):
+    f = page_file(lang, key)
+    if f.endswith('index.html'):
+        f = f[:-len('index.html')]
+    return C.SITE_URL + '/' + f
+
+
+def contact_href(lang, audience=None, role=None):
+    q = []
+    if audience == 'fachowcy':
+        q.append('dla=fachowcy' if lang == 'pl' else 'for=jobs')
+    if role:
+        q.append(('stanowisko=' if lang == 'pl' else 'role=') + role)
+    return href(lang, 'contact') + ('?' + '&'.join(q) if q else '')
+
+
+def join_names(names, lang):
+    if len(names) < 2:
+        return ''.join(names)
+    return ', '.join(names[:-1]) + ' ' + C.UI[lang]['and'] + ' ' + names[-1]
+
+
+def country_names(lang):
+    return [c[1] if lang == 'pl' else c[2] for c in C.COUNTRIES]
+
+
+def country_name(cc, lang):
+    for c in C.COUNTRIES:
+        if c[0] == cc:
+            return c[1] if lang == 'pl' else c[2]
+    return cc
+
+
+# ---------------------------------------------------------------- ikony (siatka 24, obrys, zaokrąglone końce)
+def ico(name, cls=''):
+    paths = {
+        'chev': '<path d="M9 5.5l6.5 6.5L9 18.5"/>',
+        'phone': '<path d="M6.7 3.5h2.9l1.5 4-2 1.5a12 12 0 0 0 5.9 5.9l1.5-2 4 1.5v2.9a2 2 0 0 1-2.2 2A17.4 17.4 0 0 1 4.7 5.7a2 2 0 0 1 2-2.2z"/>',
+        'mail': '<rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3.5 7.5l8.5 6 8.5-6"/>',
+        'pin': '<path d="M12 21s-6.5-5.5-6.5-10.6a6.5 6.5 0 0 1 13 0C18.5 15.5 12 21 12 21z"/><circle cx="12" cy="10.4" r="2.3"/>',
+        'check': '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+        'alert': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/>',
+        'theme': '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/>',
+        'doc': '<path d="M7.5 3.5H14l4 4v12a1 1 0 0 1-1 1H7.5a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"/><path d="M14 3.5v4h4M9.5 12.5h5M9.5 16h5"/>',
+        'team': '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19.5c.5-3.1 2.7-4.8 5.5-4.8s5 1.7 5.5 4.8"/><circle cx="17" cy="9.5" r="2.4"/><path d="M16.6 14.3c2.100.3 3.5 1.8 3.9 4.7"/>',
+        'link': '<path d="M10.5 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M13.5 10.5a4 4 0 0 0-5.7 0L5 13.3A4 4 0 0 0 10.7 19l1-1"/>',
+        'globe': '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.9 3.1 2.9 13.9 0 17M12 3.5c-2.9 3.1-2.9 13.9 0 17"/>',
+    }
+    c = ('i ' + cls).strip()
+    return f'<svg class="{c}" viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>'
+
+
+BOLT = 'M36 3 9 52h19l-6 41 33-55H35z'
+
+# ---------------------------------------------------------------- ilustracje usług
+ART = {
+    'wire': '''<svg class="art art-wire" viewBox="0 0 320 180" aria-hidden="true">
+<rect class="art-block" x="250" y="24" width="48" height="132" rx="12"/>
+<g class="art-wires">
+<path d="M0 30H70C100 30 100 72 130 72H180C208 72 208 42 236 42H256"/>
+<path d="M0 70H70C100 70 100 84 130 84H180C208 84 208 74 236 74H256"/>
+<path d="M0 110H70C100 110 100 96 130 96H180C208 96 208 106 236 106H256"/>
+<path d="M0 150H70C100 150 100 108 130 108H180C208 108 208 138 236 138H256"/>
+</g>
+<g class="art-pulse">
+<path pathLength="100" style="--i:0" d="M0 30H70C100 30 100 72 130 72H180C208 72 208 42 236 42H256"/>
+<path pathLength="100" style="--i:1" d="M0 70H70C100 70 100 84 130 84H180C208 84 208 74 236 74H256"/>
+<path pathLength="100" style="--i:2" d="M0 110H70C100 110 100 96 130 96H180C208 96 208 106 236 106H256"/>
+<path pathLength="100" style="--i:3" d="M0 150H70C100 150 100 108 130 108H180C208 108 208 138 236 138H256"/>
+</g>
+<g class="art-leds"><circle cx="274" cy="42" r="6" style="--i:0"/><circle cx="274" cy="74" r="6" style="--i:1"/><circle cx="274" cy="106" r="6" style="--i:2"/><circle cx="274" cy="138" r="6" style="--i:3"/></g>
+</svg>''',
+    'robot': '''<svg class="art art-robot" viewBox="0 0 320 180" aria-hidden="true">
+<path class="art-floor" d="M36 158H284"/>
+<rect class="art-solid" x="84" y="142" width="72" height="16" rx="6"/>
+<rect class="art-solid" x="105" y="114" width="30" height="30" rx="8"/>
+<g class="art-arm1">
+<path class="art-limb" d="M120 112 168 54" stroke-width="18"/>
+<g class="art-arm2">
+<path class="art-limb" d="M168 54 232 76" stroke-width="13"/>
+<path class="art-limb" d="M232 76 240 98" stroke-width="7"/>
+<circle class="art-joint" cx="232" cy="76" r="5"/>
+<circle class="art-spark" cx="241" cy="103" r="4.5"/>
+</g>
+<circle class="art-joint" cx="168" cy="54" r="7"/>
+</g>
+<circle class="art-joint" cx="120" cy="112" r="8"/>
+<rect class="art-part" x="216" y="124" width="52" height="34" rx="7"/>
+</svg>''',
+    'building': '''<svg class="art art-building" viewBox="0 0 320 180" aria-hidden="true">
+<path class="art-floor" d="M36 158H284"/>
+<rect class="art-frame" x="72" y="22" width="176" height="136" rx="12"/>
+<g class="art-windows">''' + ''.join(
+        f'<rect x="{88 + c * 30}" y="{38 + r * 38}" width="22" height="26" rx="5" style="--i:{r * 5 + c}"/>'
+        for r in range(3) for c in range(5)) + '''</g>
+</svg>''',
 }
 
-NAV = [('Oferta','oferta.html'),('Realizacje','realizacje.html'),('O nas','o-nas.html'),('Kariera','kariera.html'),('FAQ','faq.html'),('Kontakt','kontakt.html')]
 
-# ---------------------------------------------------------------- dane kontaktowe (podmień)
-PHONE = '+48 000 000 000'
-PHONE_HREF = 'tel:+48000000000'
-EMAIL = 'kontakt@ddvolt.pl'
-FORM_ACTION = 'https://formspree.io/f/TWOJ_ID'  # załóż darmowe konto na formspree.io i wklej ID
+# ---------------------------------------------------------------- komponenty
+def seg(lang, extra=''):
+    u = C.UI[lang]
+    return f'''<div class="seg{extra}" role="group" aria-label="{attr(u['aud_aria'])}" data-audience-switch>
+  <span class="seg-thumb" aria-hidden="true"></span>
+  <button type="button" data-value="firmy" aria-pressed="true">{esc(u['aud_firmy'])}</button>
+  <button type="button" data-value="fachowcy" aria-pressed="false">{esc(u['aud_fachowcy'])}</button>
+</div>'''
 
-def words(text):
-  return ' '.join(f'<span class="w">{w}</span>' for w in text.split(' '))
 
-def head(title, desc, canonical):
-  return f'''<!doctype html>
-<html lang="pl" data-theme="light" data-audience="firmy">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<meta name="description" content="{desc}">
-<meta property="og:title" content="{title}">
-<meta property="og:description" content="{desc}">
-<meta property="og:type" content="website">
-<meta name="theme-color" content="#0b0b0b">
-<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="preload" href="assets/fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="css/fonts.css">
-<link rel="stylesheet" href="css/style.css">
-<script>try{{var t=localStorage.getItem('dd-theme');if(t)document.documentElement.setAttribute('data-theme',t);var a=new URLSearchParams(location.search).get('dla')||localStorage.getItem('dd-audience');if(a==='fachowcy'||a==='firmy')document.documentElement.setAttribute('data-audience',a);}}catch(e){{}}</script>
-</head>
-<body>
-<div class="scroll-progress" aria-hidden="true"></div>
-'''
+def call_btn(lang, cls='btn btn--ghost', extra=''):
+    u = C.UI[lang]
+    return (f'<a class="{cls}" href="{C.PHONE_HREF}" data-phone="{attr(C.PHONE)}"{extra}>{ico("phone")}'
+            f'<span data-phone-label>{esc(u["call"])}</span></a>')
 
-def header():
-  nav = ''.join(f'<a href="{h}">{l}</a>' for l, h in NAV)
-  mob = ''.join(f'<a href="{h}">{l}{ICO["aur"]}</a>' for l, h in NAV)
-  return f'''<header class="site-header">
-  <div class="container">
-    <a class="brand" href="index.html" aria-label="DD Volt — strona główna"><i></i>DD Volt</a>
-    <nav class="nav" aria-label="Główna">{nav}</nav>
-    <div class="header-actions">
-      <div class="audience" role="group" aria-label="Ścieżka">
-        <span class="thumb" aria-hidden="true"></span>
-        <button type="button" data-value="firmy" aria-pressed="true">Dla firm</button>
-        <button type="button" data-value="fachowcy" aria-pressed="false">Dla fachowców</button>
+
+def cta_pair(lang, size='', here=False):
+    """Główne CTA zależne od ścieżki: wycena (firmy) albo aplikacja (fachowcy).
+    here=True: jesteśmy na stronie kontaktu, więc przycisk przewija do formularza."""
+    u = C.UI[lang]
+    s = (' ' + size) if size else ''
+    a = b = '#' + FORM_ID[lang]
+    if not here:
+        a, b = contact_href(lang), contact_href(lang, 'fachowcy')
+    return (f'<a class="btn btn--primary{s}" data-for="firmy" href="{a}">{esc(u["quote"])}</a>'
+            f'<a class="btn btn--primary{s}" data-for="fachowcy" href="{b}">{esc(u["apply"])}</a>')
+
+
+FORM_ID = {'pl': 'formularz', 'en': 'form'}
+
+
+def more(label, url):
+    return f'<a class="more" href="{url}">{esc(label)}{ico("chev")}</a>'
+
+
+def stat(value, unit, label, lang):
+    u = f'<span class="stat-unit">{esc(unit)}</span>' if unit else ''
+    return (f'<div class="stat"><p class="stat-num"><span data-count="{value}">{value}</span>{u}</p>'
+            f'<p class="stat-label">{typo(label, lang)}</p></div>')
+
+
+def main_stats(lang):
+    u = C.UI[lang]
+    return ''.join([
+        stat(C.PROJECTS_COUNT, '+', u['stat_projects'], lang),
+        stat(len(C.COUNTRIES), '', u['stat_countries'].format(list=', '.join(country_names(lang))), lang),
+        stat(C.MAIN_PROJECT_MONTHS, u['months'], u['stat_main'], lang),
+        stat(C.ROBOTS, '', u['stat_robots'].format(w=C.ROBOTS_WEEKS), lang),
+    ])
+
+
+def ticks(items, lang):
+    return '<ul class="ticks">' + ''.join(f'<li>{ico("check")}<span>{typo(i, lang)}</span></li>' for i in items) + '</ul>'
+
+
+def service_cards(lang):
+    u = C.UI[lang]
+    out = []
+    for s in C.SERVICES:
+        out.append(f'''<a class="svc card" href="{href(lang, 'services')}#{s['id'][lang]}" data-art>
+  <div class="svc-art">{ART[s['art']]}</div>
+  <div class="svc-body">
+    <h3 class="h-card">{typo(loc(s['title'], lang), lang)}</h3>
+    <p>{typo(loc(s['text'], lang), lang)}</p>
+    <p class="label">{esc(u['scope'])}</p>
+    {ticks(s['items'][lang], lang)}
+    <span class="more">{esc(u['details'])}{ico('chev')}</span>
+  </div>
+</a>''')
+    return '<div class="grid grid-3 stagger">' + ''.join(out) + '</div>'
+
+
+def steps_block(items, lang):
+    li = ''.join(f'''<li class="step">
+    <span class="step-node" aria-hidden="true">{i + 1}</span>
+    <h3 class="h-step">{typo(loc(t, lang), lang)}</h3>
+    <p>{typo(loc(x, lang), lang)}</p>
+  </li>''' for i, (t, x) in enumerate(items))
+    return f'<div class="steps-wrap" data-steps><span class="steps-fill" aria-hidden="true"></span><ol class="steps">{li}</ol></div>'
+
+
+def feats(items, lang):
+    li = ''.join(f'<li class="feat card" data-spot><span class="feat-ico">{ico(i)}</span>'
+                 f'<h3 class="h-feat">{typo(loc(t, lang), lang)}</h3><p>{typo(loc(x, lang), lang)}</p></li>'
+                 for i, t, x in items)
+    return f'<ul class="feats stagger">{li}</ul>'
+
+
+def job_cards(lang, limit=None, cols=3):
+    u = C.UI[lang]
+    out = []
+    for j in C.JOBS[:limit]:
+        out.append(f'''<article class="job card">
+  <p class="job-status"><span class="dot" aria-hidden="true"></span>{esc(u['open_recruitment'])}</p>
+  <h3 class="h-card">{typo(j['title'][lang], lang)}</h3>
+  <ul class="job-meta"><li>{ico('pin')}{esc(C.JOB_PLACE[lang])}</li><li>{esc(j['sector'][lang])}</li><li>{esc(C.JOB_TYPE[lang])}</li></ul>
+  <p class="label">{esc(u['requirements'])}</p>
+  {ticks(j['req'][lang], lang)}
+  <div class="job-actions">
+    <a class="btn btn--primary" href="{contact_href(lang, 'fachowcy', j['slug'])}">{esc(u['apply'])}</a>
+    {call_btn(lang)}
+  </div>
+</article>''')
+    return f'<div class="grid grid-{cols} stagger">' + ''.join(out) + '</div>'
+
+
+def faq_block(items, lang, audience=None):
+    d = ''.join(f'''<details class="qa">
+    <summary><span>{typo(q[lang], lang)}</span><span class="qa-ico" aria-hidden="true"></span></summary>
+    <div class="qa-body"><p>{typo(a[lang], lang)}</p></div>
+  </details>''' for q, a in items)
+    a = f' data-for="{audience}"' if audience else ''
+    return f'<div class="faq"{a}>{d}</div>'
+
+
+def place_label(p, lang):
+    cities = [loc(pt['city'], lang) for pt in p['points'] if not pt.get('approx')]
+    country = country_name(p['cc'], lang)
+    if not cities:
+        return country
+    return join_names(cities, lang) + ', ' + country
+
+
+def map_block(lang):
+    u = C.UI[lang]
+    items, data = [], {'countries': [], 'projects': []}
+    for cc, pl, en, lat, lon in C.COUNTRIES:
+        x, y = geo.project(lon, lat)
+        data['countries'].append({'cc': cc, 'label': pl if lang == 'pl' else en, 'x': round(x, 1), 'y': round(y, 1)})
+    for p in C.PROJECTS:
+        pts = []
+        for pt in p['points']:
+            x, y = geo.project(pt['lon'], pt['lat'])
+            pts.append({'x': round(x, 1), 'y': round(y, 1),
+                        'label': country_name(p['cc'], lang) if pt.get('approx') else loc(pt['city'], lang),
+                        'approx': bool(pt.get('approx'))})
+        data['projects'].append({'id': p['id'], 'sector': p['sector'], 'points': pts})
+        badge = f'<span class="tag tag--volt">{esc(loc(p["badge"], lang))}</span>' if p.get('badge') else ''
+        img = (f'<img class="map-item-img" src="{asset(lang, p["img"])}" alt="" loading="lazy" decoding="async">' if p.get('img') else '')
+        facts = ''.join(f'<li>{typo(f, lang)}</li>' for f in [u['sectors'][p['sector']]] + p['facts'][lang])
+        items.append(f'''<li class="map-item" data-id="{p['id']}" data-sector="{p['sector']}">
+        <button class="map-item-btn" type="button" aria-expanded="false">
+          <span class="map-item-name">{typo(loc(p['client'], lang), lang)}{badge}</span>
+          <span class="map-item-place">{typo(place_label(p, lang), lang)}</span>
+        </button>
+        <div class="map-item-body"><div>
+          {img}
+          <p class="map-item-scope">{typo(loc(p['scope'], lang), lang)}</p>
+          <p>{typo(loc(p['text'], lang), lang)}</p>
+          <ul class="facts">{facts}</ul>
+        </div></div>
+      </li>''')
+    chips = f'<button type="button" class="chip" data-filter="all" aria-pressed="true">{esc(u["all"])}</button>' + ''.join(
+        f'<button type="button" class="chip" data-filter="{k}" aria-pressed="false">{esc(v)}</button>' for k, v in u['sectors'].items())
+    meta = {'forms': u['loc_forms'], 'lang': lang}
+    data['meta'] = meta
+    return f'''<div class="mapbox reveal" data-map>
+    <div class="map-stage">
+      <svg class="map-svg" role="img" aria-label="{attr(u['map_aria'])}" data-map-svg preserveAspectRatio="xMidYMid slice"></svg>
+      <button class="map-reset" type="button" hidden>{esc(u['map_reset'])}</button>
+    </div>
+    <div class="map-side">
+      <div class="map-head">
+        <div class="chips" role="group" aria-label="{attr(u['map_filter_aria'])}">{chips}</div>
+        <span class="map-count" aria-live="polite"></span>
       </div>
-      <a class="btn btn--sm" data-for="firmy" href="kontakt.html">Wyceń projekt {ICO["aur"]}</a>
-      <a class="btn btn--sm" data-for="fachowcy" href="kontakt.html">Aplikuj {ICO["aur"]}</a>
-      <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false">{ICO["menu"]}{ICO["close"]}</button>
+      <ol class="map-list" aria-label="{attr(u['map_list_aria'])}">
+      {''.join(items)}
+      </ol>
+    </div>
+    <script type="application/json" data-map-data>{json.dumps(data, ensure_ascii=False, separators=(',', ':'))}</script>
+  </div>'''
+
+
+def project_cards(lang):
+    u = C.UI[lang]
+    out = []
+    for p in C.PROJECTS:
+        badge = f'<span class="tag tag--volt">{esc(loc(p["badge"], lang))}</span>' if p.get('badge') else ''
+        img = (f'<img class="proj-img" src="{asset(lang, p["img"])}" alt="{attr(loc(p["client"], lang))}, {attr(place_label(p, lang))}" loading="lazy" decoding="async">'
+               if p.get('img') else '')
+        facts = ''.join(f'<li>{typo(f, lang)}</li>' for f in p['facts'][lang])
+        out.append(f'''<article class="proj card{' proj--photo' if img else ''}" id="{p['id']}">
+  {img}
+  <div class="proj-body">
+    <p class="proj-top"><span class="tag">{esc(u['sectors'][p['sector']])}</span>{badge}</p>
+    <h3 class="h-card">{typo(loc(p['client'], lang), lang)}</h3>
+    <p class="proj-scope">{typo(loc(p['scope'], lang), lang)}</p>
+    <p class="proj-place">{ico('pin')}{typo(place_label(p, lang), lang)}</p>
+    <p class="proj-text">{typo(loc(p['text'], lang), lang)}</p>
+    <ul class="facts">{facts}</ul>
+  </div>
+</article>''')
+    return '<div class="grid grid-3 stagger">' + ''.join(out) + '</div>'
+
+
+def cta_band(lang):
+    u = C.UI[lang]
+    return f'''<section class="cta tone-night">
+  <div class="cta-glow" aria-hidden="true"></div>
+  <div class="container reveal">
+    <h2 class="h-display" data-for="firmy">{typo(u['cta_firmy_h'], lang)}</h2>
+    <h2 class="h-display" data-for="fachowcy">{typo(u['cta_fach_h'], lang)}</h2>
+    <p class="lead" data-for="firmy">{typo(u['cta_firmy_p'], lang)}</p>
+    <p class="lead" data-for="fachowcy">{typo(u['cta_fach_p'], lang)}</p>
+    <div class="actions">
+      {cta_pair(lang, 'btn--lg')}
+      {call_btn(lang, 'btn btn--ghost btn--lg')}
     </div>
   </div>
-</header>
-<div class="mobile-menu">
-  {mob}
-  <div class="audience" role="group" aria-label="Ścieżka" style="justify-self:start;margin-top:16px">
-    <span class="thumb" aria-hidden="true"></span>
-    <button type="button" data-value="firmy" aria-pressed="true">Dla firm</button>
-    <button type="button" data-value="fachowcy" aria-pressed="false">Dla fachowców</button>
+</section>
+'''
+
+
+def intro(h, p=None, link=None, lang='pl', tag='h2'):
+    out = f'<header class="intro reveal"><{tag} class="h-display">{typo(h, lang)}</{tag}>'
+    if p:
+        out += f'<p class="lead">{typo(p, lang)}</p>'
+    if link:
+        out += more(*link)
+    return out + '</header>'
+
+
+def page_head(h1, lead, lang, extra='', h1_alt=None):
+    """Nagłówek podstrony. h1_alt = wariant dla ścieżki „fachowcy”."""
+    if h1_alt:
+        hs = (f'<h1 class="h-page"><span class="split" data-for="firmy">{split(h1, lang)}</span>'
+              f'<span class="split" data-for="fachowcy">{split(h1_alt, lang)}</span></h1>')
+    else:
+        hs = f'<h1 class="h-page split">{split(h1, lang)}</h1>'
+    lead_html = f'<p class="lead rise" style="--d:2">{typo(lead, lang)}</p>' if lead else ''
+    return f'''<section class="page-head tone-night">
+  <div class="container">
+    {hs}
+    {lead_html}
+    {extra}
   </div>
-  <div class="mobile-cta">
-    <a class="btn btn--lg" data-for="firmy" href="kontakt.html">Wyceń projekt {ICO["aur"]}</a>
-    <a class="btn btn--lg" data-for="fachowcy" href="kontakt.html">Aplikuj {ICO["aur"]}</a>
-    <a class="btn btn--lg btn--outline" href="{PHONE_HREF}">{ICO["phone"]} Zadzwoń</a>
+</section>
+'''
+
+
+# ---------------------------------------------------------------- szkielet strony
+BOOT_JS = ("(function(){var d=document.documentElement;d.classList.remove('no-js');d.classList.add('js');try{"
+           "var t=localStorage.getItem('dd-theme');if(t==='dark'||t==='light')d.setAttribute('data-theme',t);"
+           "var q=new URLSearchParams(location.search),p=q.get('dla')||q.get('for');"
+           "p=p==='jobs'?'fachowcy':p==='companies'?'firmy':p;"
+           "var a=d.getAttribute('data-audience-lock')||(p==='fachowcy'||p==='firmy'?p:localStorage.getItem('dd-audience'));"
+           "if(a==='fachowcy'||a==='firmy')d.setAttribute('data-audience',a);"
+           "if(!sessionStorage.getItem('dd-boot')&&!matchMedia('(prefers-reduced-motion: reduce)').matches)d.classList.add('is-booting');"
+           "}catch(e){}setTimeout(function(){if(!window.DDV_READY)d.classList.add('no-anim')},4500);})();")
+
+
+def head(lang, key, title, desc, lock=None, extra_head='', noindex=False):
+    other = 'en' if lang == 'pl' else 'pl'
+    alternates = ''
+    if key in C.PAGES:
+        alternates = (f'<link rel="canonical" href="{abs_url(lang, key)}">\n'
+                      f'<link rel="alternate" hreflang="{lang}" href="{abs_url(lang, key)}">\n'
+                      f'<link rel="alternate" hreflang="{other}" href="{abs_url(other, key)}">\n'
+                      f'<link rel="alternate" hreflang="x-default" href="{abs_url("pl", key)}">\n'
+                      f'<meta property="og:url" content="{abs_url(lang, key)}">\n')
+    lock_attr = f' data-audience-lock="{lock}"' if lock else ''
+    robots = '<meta name="robots" content="noindex">\n' if noindex else ''
+    return f'''<!DOCTYPE html>
+<html lang="{lang}" class="no-js" data-theme="light" data-audience="{lock or 'firmy'}"{lock_attr}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{esc(title)}</title>
+<meta name="description" content="{attr(desc)}">
+{robots}{alternates}<meta property="og:title" content="{attr(title)}">
+<meta property="og:description" content="{attr(desc)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="DD Volt">
+<meta property="og:locale" content="{'pl_PL' if lang == 'pl' else 'en_GB'}">
+<meta property="og:image" content="{C.SITE_URL}/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#000000">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" href="{asset(lang, 'assets/favicon.svg')}" type="image/svg+xml">
+<link rel="icon" href="{asset(lang, 'assets/favicon-48.png')}" type="image/png" sizes="48x48">
+<link rel="apple-touch-icon" href="{asset(lang, 'assets/apple-touch-icon.png')}">
+<link rel="preload" href="{asset(lang, 'assets/fonts/sofia-sans-latin.woff2')}" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{asset(lang, 'assets/fonts/sofia-sans-latin-ext.woff2')}" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{asset(lang, 'css/style.css')}">
+<script>{BOOT_JS}</script>
+{extra_head}</head>
+<body>
+'''
+
+
+def header(lang, key):
+    u = C.UI[lang]
+
+    def link(k, big=False):
+        cur = ' aria-current="page"' if k == key else ''
+        if big:
+            return f'<a href="{href(lang, k)}"{cur} style="--i:{C.NAV.index(k)}"><span>{esc(u["nav"][k])}</span>{ico("chev")}</a>'
+        return f'<a href="{href(lang, k)}"{cur}>{esc(u["nav"][k])}</a>'
+
+    nav = ''.join(link(k) for k in C.NAV)
+    mob = ''.join(link(k, True) for k in C.NAV)
+    other = 'en' if lang == 'pl' else 'pl'
+    lang_link = lambda cls, label: (f'<a class="{cls}" href="{alt_href(lang, key) if key in C.PAGES else alt_href(lang, "home")}" '
+                                    f'hreflang="{other}" lang="{other}">{label}</a>')
+    return f'''<a class="skip" href="#main">{esc(u['skip'])}</a>
+<div class="boot" aria-hidden="true">
+  <div class="boot-flash"></div>
+  <svg class="boot-bolt" viewBox="0 0 64 96"><path class="boot-bolt-fill" d="{BOLT}"/><path class="boot-bolt-line" pathLength="1" d="{BOLT}"/></svg>
+  <span class="boot-name">DD Volt</span>
+</div>
+<header class="site-header" data-header>
+  <div class="bar">
+    <a class="brand" href="{href(lang, 'home')}" aria-label="{attr(u['home_aria'])}"><span class="brand-mark" aria-hidden="true"></span>DD Volt</a>
+    <nav class="nav" aria-label="{attr(u['nav_aria'])}">{nav}</nav>
+    <div class="bar-actions">
+      <a class="bar-phone" href="{C.PHONE_HREF}" data-phone="{attr(C.PHONE)}">{ico('phone')}<span>{esc(C.PHONE)}</span></a>
+      {lang_link('bar-lang', esc(u['lang_code']) + '<span class="sr-only">: ' + esc(u['lang_aria']) + '</span>')}
+      {cta_pair(lang, 'btn--sm', key == 'contact')}
+      <button class="menu-btn" type="button" aria-expanded="false" aria-controls="menu" aria-label="{attr(u['menu_open'])}" data-open="{attr(u['menu_open'])}" data-close="{attr(u['menu_close'])}"><span></span><span></span></button>
+    </div>
+  </div>
+  <div class="progress" aria-hidden="true"></div>
+</header>
+<div class="menu" id="menu" inert>
+  <nav class="menu-nav" aria-label="{attr(u['menu_aria'])}">{mob}</nav>
+  <div class="menu-foot">
+    <div class="menu-row">
+      {seg(lang)}
+      {lang_link('menu-lang', ico('globe') + esc(u['lang_switch']))}
+    </div>
+    <div class="menu-cta">
+      {cta_pair(lang, 'btn--lg', key == 'contact')}
+      {call_btn(lang, 'btn btn--ghost btn--lg')}
+    </div>
   </div>
 </div>
 '''
 
-def footer(map_script=False):
-  nav = ''.join(f'<li><a href="{h}">{l}</a></li>' for l, h in NAV)
-  scripts = '<script src="js/main.js"></script>'
-  if map_script:
-    scripts = ('<link rel="stylesheet" href="vendor/leaflet.css">'
-               '<script src="vendor/leaflet.js"></script>'
-               '<script src="js/main.js"></script><script src="js/map.js"></script>')
-  return f'''<footer class="site-footer">
+
+def footer(lang, key, scripts=(), dock=True):
+    u = C.UI[lang]
+    nav = ''.join(f'<li><a href="{href(lang, k)}">{esc(u["nav"][k])}</a></li>' for k in C.NAV)
+    other = 'en' if lang == 'pl' else 'pl'
+    alt = alt_href(lang, key) if key in C.PAGES else alt_href(lang, 'home')
+    js = ''.join(f'<script src="{asset(lang, s)}" defer></script>\n' for s in ('js/main.js',) + tuple(scripts))
+    dock_html = f'''<div class="dock" role="region" aria-label="{attr(u['dock_aria'])}" data-dock>
+  {call_btn(lang, 'dock-call')}
+  {cta_pair(lang)}
+</div>
+''' if dock else ''
+    return f'''<footer class="site-footer tone-night">
   <div class="container">
     <div class="footer-grid">
-      <div>
-        <a class="brand" href="index.html"><i></i>DD Volt</a>
-        <p class="muted" style="margin-top:16px;max-width:34ch">Elektryka i mechanika linii produkcyjnych. Automotive, przemysł, obiekty. Cała Europa.</p>
+      <div class="footer-brand">
+        <a class="brand" href="{href(lang, 'home')}" aria-label="{attr(u['home_aria'])}"><span class="brand-mark" aria-hidden="true"></span>DD Volt</a>
+        <p>{typo(u['footer_tag'], lang)}</p>
       </div>
-      <div class="col"><h4>Serwis</h4><ul>{nav}</ul></div>
-      <div class="col"><h4>Dla kogo</h4><ul>
-        <li><a href="oferta.html?dla=firmy">Dla firm — wycena</a></li>
-        <li><a href="kariera.html?dla=fachowcy">Dla fachowców — praca</a></li>
-        <li><a href="realizacje.html">Mapa realizacji</a></li>
+      <nav class="footer-col" aria-label="{attr(u['f_site'])}"><h2>{esc(u['f_site'])}</h2><ul>{nav}</ul></nav>
+      <div class="footer-col"><h2>{esc(u['f_for'])}</h2><ul>
+        <li><a href="{href(lang, 'services')}">{typo(u['f_firmy'], lang)}</a></li>
+        <li><a href="{href(lang, 'careers')}">{typo(u['f_fachowcy'], lang)}</a></li>
+        <li><a href="{href(lang, 'projects')}">{typo(u['f_map'], lang)}</a></li>
       </ul></div>
-      <div class="col"><h4>Kontakt</h4><ul>
-        <li><a href="{PHONE_HREF}">{PHONE}</a></li>
-        <li><a href="mailto:{EMAIL}">{EMAIL}</a></li>
-        <li><a href="kontakt.html">Formularz</a></li>
+      <div class="footer-col"><h2>{esc(u['f_contact'])}</h2><ul>
+        <li><a href="{C.PHONE_HREF}" data-phone="{attr(C.PHONE)}"><span>{esc(C.PHONE)}</span></a></li>
+        <li><a href="mailto:{C.EMAIL}">{esc(C.EMAIL)}</a></li>
+        <li><a href="{href(lang, 'contact')}">{typo(u['f_form'], lang)}</a></li>
       </ul></div>
     </div>
     <div class="footer-bottom">
-      <span>© 2026 DD Volt</span>
-      <span style="display:flex;gap:24px;flex-wrap:wrap">
-        <a href="polityka-prywatnosci.html">Polityka prywatności</a>
-        <a href="polityka-cookies.html">Polityka cookies</a>
-        <button class="theme-toggle" type="button">{ICO["sun"]} motyw</button>
-      </span>
-    </div>
-  </div>
-</footer>
-<div class="cookie" role="dialog" aria-label="Cookies">
-  <p>Bez analityki i reklam. Tylko ustawienia strony i kafle mapy z CARTO. Szczegóły w <a href="polityka-cookies.html">polityce cookies</a>.</p>
-  <button class="btn btn--sm" type="button" data-consent="all">OK</button>
-</div>
-{scripts}
-</body>
-</html>
-'''
-
-def page(name, title, desc, body, map_script=False):
-  html = head(title, desc, name) + header() + body + footer(map_script)
-  (ROOT / name).write_text(html, encoding='utf-8')
-  print('→', name)
-
-# ---------------------------------------------------------------- bloki wielokrotne
-def cta_band():
-  return f'''<section class="section section--night cta-band on-night">
-  <div class="glow" aria-hidden="true"></div>
-  <div class="container reveal">
-    <span class="eyebrow">Kontakt</span>
-    <h2 class="display" style="margin-top:16px" data-for="firmy">Masz linię do podłączenia? <span class="hl">Policzmy to.</span></h2>
-    <h2 class="display" style="margin-top:16px" data-for="fachowcy">Umiesz czytać schemat? <span class="hl">Jedź z nami.</span></h2>
-    <p class="lead" style="margin-top:16px">Odpisujemy w ciągu jednego dnia roboczego. Bez formularzy na pięć stron.</p>
-    <div class="actions">
-      <a class="btn btn--lg" data-for="firmy" href="kontakt.html">Wyceń projekt {ICO["aur"]}</a>
-      <a class="btn btn--lg" data-for="fachowcy" href="kontakt.html">Aplikuj {ICO["aur"]}</a>
-      <a class="btn btn--lg btn--outline" href="{PHONE_HREF}">{ICO["phone"]} Zadzwoń</a>
-    </div>
-  </div>
-</section>
-'''
-
-SERVICES = [
-  ('01','Elektryka od A do Z','Trasy, okablowanie, szafy i podłączenia. Zgodnie ze schematem, e-planem i layoutem od generalnego wykonawcy.',
-   ['Czytanie schematów i e-planu','Trasy kablowe i okablowanie','Szafy sterownicze','Podłączenie maszyn i silników']),
-  ('02','Mechanika i roboty','Stawiamy roboty i urządzenia linii, potem je podłączamy. Jedna ekipa od montażu do gotowego stanowiska.',
-   ['Montaż robotów','Ustawienie urządzeń linii','Podłączenie do instalacji','Uruchomienie z GW']),
-  ('03','Obiekty i budynki','Serwerownie, szkoły, oświetlenie i siła. Tam, gdzie liczy się porządek w trasach i czysta dokumentacja.',
-   ['Serwerownie','Oświetlenie i siła','Rozdzielnie','Mieszkaniówka na zapytanie']),
-]
-
-def service_cards(link=True):
-  out = []
-  for idx, t, txt, items in SERVICES:
-    li = ''.join(f'<li>{i}</li>' for i in items)
-    tag = 'a' if link else 'div'
-    href = ' href="oferta.html"' if link else ''
-    out.append(f'''<{tag} class="card service"{href}>
-      <div class="top"><span class="idx">{idx}</span><span class="ring">{ICO["ar"]}</span></div>
-      <h3 class="heading">{t}</h3>
-      <p>{txt}</p>
-      <ul>{li}</ul>
-    </{tag}>''')
-  return ''.join(out)
-
-PROJECTS = [
-  ('Automotive','Ford — linia i lakiernia','Kolonia, Niemcy','Instalacje elektryczne linii produkcyjnej i lakierni. Dwa lata na jednym zakładzie.',[('Kraj','Niemcy'),('Czas','24 mies.'),('Przez','SICA')],'Lider zespołu'),
-  ('Automotive','Tesla — zakład produkcyjny','Niemcy','Rok na budowie linii: elektryka i mechanika. Pierwszy duży projekt na własnej działalności.',[('Kraj','Niemcy'),('Czas','12 mies.'),('Zakres','Elektryka + mechanika')],''),
-  ('Automotive','Lakiernia','Bergamo, Włochy','Instalacje elektryczne i mechaniczne lakierni, trzy miesiące z ekipą na miejscu.',[('Kraj','Włochy'),('Czas','3 mies.'),('Zakres','Elektryka + mechanika')],''),
-  ('Automotive','BMW — linia produkcyjna','Monachium, Niemcy','Elektryka i mechanika linii dla BMW, jako podwykonawca.',[('Kraj','Niemcy'),('Przez','Proster'),('Zakres','Linia')],''),
-  ('Automotive','Audi — zakład produkcyjny','Győr, Węgry','Dwa miesiące na linii Audi: okablowanie i podłączenia.',[('Kraj','Węgry'),('Czas','2 mies.'),('Zakres','Elektryka')],''),
-  ('Obiekty','Serwerownia — Microsoft','Niemcy','Instalacja elektryczna serwerowni. Prowadzenie ekipy jako lider.',[('Branża','IT / obiekty'),('Czas','2 mies.'),('Rola','Lider')],'Lider zespołu'),
-  ('Przemysł','Producent wód mineralnych','Frankfurt, Niemcy','Elektryka linii rozlewniczej w zakładzie spożywczym.',[('Kraj','Niemcy'),('Czas','2 mies.'),('Branża','Spożywcza')],''),
-  ('Obiekty','Szkoły — instalacje','Niemcy','Pełne instalacje szkolne: oświetlenie, siła, rozdzielnie. Kilka obiektów.',[('Kraj','Niemcy'),('Obiekty','kilka'),('Zakres','Instalacje')],''),
-  ('Przemysł','Piece przemysłowe','Zawiercie, Polska','Elektryka pieców przemysłowych.',[('Kraj','Polska'),('Zakres','Elektryka'),('Branża','Przemysł')],''),
-  ('Przemysł','Podłączenie silników','Warszawa · Częstochowa','Podłączenia silników i urządzeń na halach produkcyjnych.',[('Kraj','Polska'),('Obiekty','2'),('Zakres','Silniki')],''),
-]
-
-def project_cards(limit=None):
-  out = []
-  for sector, title, place, txt, facts, badge in PROJECTS[:limit]:
-    f = ''.join(f'<div><span class="label">{k}</span><b>{v}</b></div>' for k, v in facts)
-    b = f'<span class="badge tag-chip tag-chip--solid">{badge}</span>' if badge else ''
-    out.append(f'''<article class="card project">
-      <div class="photo">{b}<span class="label">Zdjęcie z realizacji</span></div>
-      <div class="body">
-        <span class="tag-chip" style="justify-self:start">{sector}</span>
-        <h3 class="heading">{title}</h3>
-        <span class="place">{ICO["pin"]}{place}</span>
-        <p>{txt}</p>
-        <div class="facts">{f}</div>
-      </div>
-    </article>''')
-  return ''.join(out)
-
-def map_block(eyebrow='02 / Realizacje', title='Gdzie już <span class="hl">pracowaliśmy</span>.', lead='Każdy projekt na mapie to miejsce, w którym ekipa była na hali. Kliknij pinezkę albo pozycję z listy.'):
-  return f'''<section class="section section--night on-night" id="mapa">
-  <div class="container">
-    <div class="section-header section-header--row reveal">
-      <div>
-        <span class="eyebrow">{eyebrow}</span>
-        <h2 class="display" style="margin-top:16px">{title}</h2>
-        <p class="lead" style="margin-top:16px">{lead}</p>
-      </div>
-      <a class="btn btn--outline" href="realizacje.html">Wszystkie realizacje {ICO["ar"]}</a>
-    </div>
-    <div class="map-panel reveal" data-delay="1">
-      <div class="map-canvas"><div id="map" role="application" aria-label="Mapa realizacji"></div></div>
-      <aside class="map-side">
-        <div class="head"><span class="eyebrow">Lokalizacje</span><span class="tag map-count">—</span></div>
-        <div class="map-filters" role="group" aria-label="Filtr">
-          <button type="button" data-filter="all" aria-pressed="true">Wszystkie</button>
-          <button type="button" data-filter="Automotive" aria-pressed="false">Automotive</button>
-          <button type="button" data-filter="Przemysł" aria-pressed="false">Przemysł</button>
-          <button type="button" data-filter="Obiekty" aria-pressed="false">Obiekty</button>
-          <button type="button" data-filter="DE" aria-pressed="false">DE</button>
-          <button type="button" data-filter="PL" aria-pressed="false">PL</button>
-          <button type="button" data-filter="IT" aria-pressed="false">IT</button>
-          <button type="button" data-filter="HU" aria-pressed="false">HU</button>
-        </div>
-        <div class="map-active" aria-live="polite"></div>
-        <div class="map-list" role="list"></div>
-      </aside>
-    </div>
-  </div>
-</section>
-'''
-
-FAQ_FIRMY = [
-  ('Na jakim obszarze pracujecie?','W całej Europie. Mamy za sobą projekty w Niemczech, we Włoszech, na Węgrzech i w Polsce. Rozmawiamy też o projektach poza Europą.'),
-  ('Z jakiej dokumentacji pracujecie?','Ze schematów elektrycznych, e-planu i layoutu od generalnego wykonawcy. Czytamy je sami, nie potrzebujemy tłumaczenia na miejscu.'),
-  ('Robicie tylko elektrykę?','Nie. Elektrykę i mechanikę: stawiamy roboty i urządzenia linii, a potem je podłączamy. Jedna ekipa, jeden lider.'),
-  ('Jak szybko możecie wejść na projekt?','Zależy od terminu i wielkości ekipy. Zwykle podajemy datę w ciągu kilku dni od zapytania.'),
-  ('Ilu ludzi możecie wystawić?','Prowadziliśmy ekipy do 20 osób. Przy większych zakresach łączymy kilka brygad z osobnymi liderami.'),
-  ('Czy możecie pokazać referencje?','Tak, po rozmowie. Nazwy klientów końcowych podajemy tekstem; zdjęcia z zakładów udostępniamy po zgodzie GW.'),
-]
-FAQ_FACHOWCY = [
-  ('Jaka forma współpracy?','Umowa albo B2B, do wyboru. Przy B2B pomagamy ogarnąć start.'),
-  ('Jak wyglądają wyjazdy?','Projekty trwają od kilku tygodni do kilkunastu miesięcy. Zakwaterowanie i dojazd ustalamy przed wyjazdem, nie po.'),
-  ('Czego wymagacie?','Czytania schematów elektrycznych albo doświadczenia w montażu mechanicznym. Reszty nauczysz się na hali, z liderem obok.'),
-  ('Czy potrzebuję znać język?','Podstawy angielskiego albo niemieckiego pomagają, ale lider na miejscu ogarnia komunikację z GW.'),
-  ('Jak aplikować?','Wyślij formularz z kontaktu albo zadzwoń. Odpisujemy w ciągu jednego dnia roboczego.'),
-]
-
-def faq_block(items, audience=None):
-  d = ''.join(f'''<details>
-      <summary>{q}<span class="ico">{ICO["plus"]}{ICO["minus"]}</span></summary>
-      <div class="answer"><div>{a}</div></div>
-    </details>''' for q, a in items)
-  attr = f' data-for="{audience}"' if audience else ''
-  return f'<div class="faq"{attr}>{d}</div>'
-
-STEPS = [
-  ('01','Dokumentacja','Dostajemy schematy, e-plan i layout od generalnego wykonawcy. Planujemy robotę i ludzi.'),
-  ('02','Ekipa na miejscu','Przyjeżdżamy z liderem, który ustawia robotę tak, żeby szła do przodu od pierwszego dnia.'),
-  ('03','Montaż i podłączenie','Trasy, okablowanie, roboty i urządzenia. Od A do Z, zgodnie ze schematem.'),
-  ('04','Przekazanie','Oddajemy zakres gotowy do dalszych prac generalnego wykonawcy. Bez spalonych mostów.'),
-]
-def steps_block():
-  return '<div class="steps">' + ''.join(f'<div class="step"><span class="idx">{i}</span><h3 class="heading">{t}</h3><p>{x}</p></div>' for i,t,x in STEPS) + '</div>'
-
-SCHEMATIC = '''<svg class="schematic" viewBox="0 0 400 500" aria-hidden="true">
-  <g>
-    <polyline class="draw" points="40,60 40,140 120,140 120,200"/>
-    <polyline class="draw" points="120,200 120,260 200,260 200,330 280,330"/>
-    <polyline class="draw" points="280,330 280,420 360,420"/>
-    <polyline class="draw" points="200,60 200,120 320,120 320,200"/>
-    <rect class="draw" x="280" y="200" width="80" height="50"/>
-    <rect class="draw" x="60" y="300" width="100" height="60"/>
-    <polyline class="draw" points="160,330 200,330"/>
-  </g>
-  <polyline class="flow" points="40,60 40,140 120,140 120,200 120,260 200,260 200,330 280,330 280,420 360,420"/>
-  <rect class="node" x="36" y="56" width="8" height="8"/>
-  <rect class="node" x="196" y="56" width="8" height="8"/>
-  <rect class="node" x="356" y="416" width="8" height="8"/>
-  <rect class="pulse" x="114" y="194" width="12" height="12"/>
-  <rect class="pulse" x="314" y="194" width="12" height="12"/>
-  <rect class="pulse" x="274" y="324" width="12" height="12"/>
-  <text x="60" y="52">L1 · 400V</text>
-  <text x="220" y="52">PLC</text>
-  <text x="290" y="226" style="text-anchor:start">ROBOT 03</text>
-  <text x="70" y="335">SZAFA 1</text>
-  <text x="300" y="455">M1 · 15 kW</text>
-</svg>'''
-
-# ---------------------------------------------------------------- strona główna
-HOME = f'''<section class="hero on-night">
-  <div class="container">
-    <div class="hero-grid">
-      <div>
-        <span class="eyebrow" data-for="firmy">Elektryka · Mechanika · Automotive</span>
-        <span class="eyebrow" data-for="fachowcy">Kariera · Wyjazdy · Europa</span>
-        <h1 class="display-xl words" data-for="firmy">{words('Linie produkcyjne podłączone')} <span class="hl">{words('od A do Z.')}</span></h1>
-        <h1 class="display-xl words" data-for="fachowcy">{words('Jeździsz na montaże? Jedź z ekipą,')} <span class="hl">{words('która dowozi.')}</span></h1>
-        <p class="lead" data-for="firmy">Elektryka i mechanika dla automotive i przemysłu: od czytania schematów po podłączenie robota. Pracujemy w całej Europie.</p>
-        <p class="lead" data-for="fachowcy">Projekty u Forda, Tesli, BMW i Audi. Lider na miejscu, jasne warunki, robota, która idzie do przodu.</p>
-        <div class="actions">
-          <a class="btn btn--lg" data-for="firmy" href="kontakt.html">Wyceń projekt {ICO["aur"]}</a>
-          <a class="btn btn--lg btn--outline" data-for="firmy" href="realizacje.html">Zobacz realizacje</a>
-          <a class="btn btn--lg" data-for="fachowcy" href="kariera.html">Zobacz oferty pracy {ICO["aur"]}</a>
-          <a class="btn btn--lg btn--outline" data-for="fachowcy" href="{PHONE_HREF}">{ICO["phone"]} Zadzwoń</a>
-        </div>
-      </div>
-      <div class="hero-art reveal" data-delay="2">
-        {SCHEMATIC}
-        <span class="label label-r">E-plan · fragment</span>
-        <span class="label">Tu wejdzie zdjęcie z hali</span>
-      </div>
-    </div>
-    <div class="stats stats--4">
-      <div class="stat"><div class="num"><span data-count="12">0</span><span class="unit">+</span></div><span class="label">Realizacji w automotive i przemyśle</span></div>
-      <div class="stat"><div class="num"><span data-count="4">0</span></div><span class="label">Kraje: DE · IT · HU · PL</span></div>
-      <div class="stat"><div class="num"><span data-count="24">0</span><span class="unit">mies.</span></div><span class="label">Najdłuższy projekt — Ford, Kolonia</span></div>
-      <div class="stat"><div class="num"><span data-count="20">0</span><span class="unit">osób</span></div><span class="label">Największa ekipa pod jednym liderem</span></div>
-    </div>
-  </div>
-</section>
-
-<div class="ticker" aria-label="Klienci końcowi">
-  <div class="track">
-    {''.join('<span class="item"><b>%s</b> %s</span>' % x for x in [('Ford','Kolonia'),('Tesla','Niemcy'),('BMW','Monachium'),('Audi','Győr'),('Microsoft','serwerownia'),('Lakiernia','Bergamo'),('Wody mineralne','Frankfurt'),('Piece','Zawiercie')]*2)}
-  </div>
-</div>
-
-<section class="section" id="oferta">
-  <div class="container">
-    <div class="section-header section-header--row reveal">
-      <div>
-        <span class="eyebrow">01 / Oferta</span>
-        <h2 class="display" style="margin-top:16px">Elektryka i mechanika linii <span class="hl">od A do Z</span>.</h2>
-        <p class="lead" style="margin-top:16px">Pracujemy według schematów, e-planu i layoutu od generalnego wykonawcy. Od tras kablowych po podłączenie robota.</p>
-      </div>
-      <a class="btn btn--outline" href="oferta.html">Cała oferta {ICO["ar"]}</a>
-    </div>
-    <div class="grid grid-3 stagger">{service_cards()}</div>
-  </div>
-</section>
-
-{map_block()}
-
-<section class="section section--alt" id="jak-pracujemy">
-  <div class="container">
-    <div class="section-header reveal">
-      <span class="eyebrow">03 / Jak pracujemy</span>
-      <h2 class="display">Cztery kroki, <span class="hl">jeden lider</span>.</h2>
-    </div>
-    {steps_block()}
-  </div>
-</section>
-
-<section class="section section--night on-night" id="dlaczego-my">
-  <div class="container">
-    <div class="why">
-      <div class="reveal">
-        <span class="eyebrow">04 / Dlaczego my</span>
-        <h2 class="display" style="margin-top:16px">Bez spalonych mostów. Z robotą, która <span class="hl">idzie do przodu</span>.</h2>
-        <p class="lead" style="margin-top:24px">Każdy generalny wykonawca pyta o to samo: gdzie robiliście i czy wrócicie na kolejny projekt. Odpowiedź na pierwsze jest na mapie. Na drugie: tak, wracamy.</p>
-        <a class="btn btn--outline" style="margin-top:32px" href="o-nas.html">Poznaj ekipę {ICO["ar"]}</a>
-      </div>
-      <ul class="why-list stagger">
-        <li><span class="idx">01</span><div><h3>Czytamy schematy sami</h3><p>E-plan, layout, dokumentacja GW. Nie czekamy, aż ktoś pokaże palcem.</p></div></li>
-        <li><span class="idx">02</span><div><h3>Lider zawsze na hali</h3><p>Ustawia ludzi, pilnuje tempa i rozmawia z generalnym wykonawcą. Robota nie stoi.</p></div></li>
-        <li><span class="idx">03</span><div><h3>Elektryka i mechanika razem</h3><p>Stawiamy robota i go podłączamy. Jedna ekipa zamiast dwóch firm, które się nie dogadują.</p></div></li>
-        <li><span class="idx">04</span><div><h3>Te same twarze na kolejnym projekcie</h3><p>Ekipa, która wraca z Forda na Teslę, a z Tesli do Bergamo. Zgrana, nie przypadkowa.</p></div></li>
+      <span>© {C.YEAR} DD Volt</span>
+      <ul>
+        <li><a href="{href(lang, 'privacy')}">{esc(u['privacy'])}</a></li>
+        <li><a href="{href(lang, 'cookies')}">{esc(u['cookies'])}</a></li>
+        <li><a href="{alt}" hreflang="{other}" lang="{other}">{esc(u['lang_switch'])}</a></li>
+        <li><button class="theme-toggle" type="button" data-theme-toggle>{ico('theme')}{esc(u['theme'])}</button></li>
       </ul>
     </div>
   </div>
+</footer>
+{dock_html}<div class="toast" role="status" aria-live="polite" data-toast data-copied="{attr(u['copied'])}"></div>
+{js}</body>
+</html>
+'''
+
+
+def write(path, text):
+    f = ROOT / path
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(text, encoding='utf-8')
+    print('  ', path)
+
+
+def page(lang, key, body, lock=None, scripts=(), extra_head='', dock=True, main_cls=''):
+    t = C.T[lang][key]
+    cls = f' class="{main_cls}"' if main_cls else ''
+    doc = (head(lang, key, t['title'], t.get('desc', t['title']), lock, extra_head)
+           + header(lang, key) + f'<main id="main"{cls}>\n' + body + '</main>\n' + footer(lang, key, scripts, dock))
+    write(page_file(lang, key), doc)
+
+
+def ld(obj):
+    return '<script type="application/ld+json">' + json.dumps(obj, ensure_ascii=False, separators=(',', ':')) + '</script>\n'
+
+
+# ---------------------------------------------------------------- strony
+def build_home(lang):
+    t, u = C.T[lang]['home'], C.UI[lang]
+    clients = ''.join(f'<span class="marquee-item"><b>{esc(n)}</b> {esc(pl if lang == "pl" else en)}</span>' for n, pl, en in C.CLIENTS)
+    body = f'''<section class="hero tone-night" data-hero>
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="container hero-top">
+    <div class="rise" style="--d:0">{seg(lang)}</div>
+    <h1 class="h-hero"><span class="split" data-for="firmy">{split(t['h1_firmy'], lang)}</span><span class="split" data-for="fachowcy">{split(t['h1_fach'], lang)}</span></h1>
+    <p class="lead rise" style="--d:3" data-for="firmy">{typo(t['lead_firmy'], lang)}</p>
+    <p class="lead rise" style="--d:3" data-for="fachowcy">{typo(t['lead_fach'], lang)}</p>
+    <div class="actions rise" style="--d:4">
+      <a class="btn btn--primary btn--lg" data-for="firmy" href="{contact_href(lang)}">{esc(u['quote'])}</a>
+      <a class="btn btn--ghost btn--lg" data-for="firmy" href="{href(lang, 'projects')}">{esc(t['see_projects'])}</a>
+      <a class="btn btn--primary btn--lg" data-for="fachowcy" href="{href(lang, 'careers')}">{esc(t['see_jobs'])}</a>
+      {call_btn(lang, 'btn btn--ghost btn--lg', ' data-for="fachowcy"')}
+    </div>
+  </div>
+  <div class="wave rise" style="--d:5" aria-hidden="true">
+    <canvas data-wave></canvas>
+    <p class="wave-key"><span>L1</span><span>L2</span><span>L3</span></p>
+  </div>
+  <div class="container">
+    <div class="stats stats--4 rise" style="--d:6" data-stats>{main_stats(lang)}</div>
+  </div>
 </section>
 
-<section class="section" id="kariera">
+<div class="marquee tone-night" role="group" aria-label="{attr(u['clients_aria'])}">
+  <div class="marquee-track"><div class="marquee-set">{clients}</div><div class="marquee-set" aria-hidden="true">{clients}</div></div>
+</div>
+
+<section class="section tone-light" id="{'oferta' if lang == 'pl' else 'services'}" data-order="offer">
   <div class="container">
-    <div class="section-header section-header--row reveal">
-      <div>
-        <span class="eyebrow">05 / Kariera</span>
-        <h2 class="display" style="margin-top:16px">Szukamy ludzi, którzy <span class="hl">umieją czytać schemat</span>.</h2>
-        <p class="lead" style="margin-top:16px">Umowa albo B2B. Projekty w całej Europie, lider na miejscu, warunki ustalone przed wyjazdem.</p>
+    {intro(t['offer_h'], t['offer_p'], (t['offer_more'], href(lang, 'services')), lang)}
+    {service_cards(lang)}
+  </div>
+</section>
+
+<section class="section tone-night" id="{'mapa' if lang == 'pl' else 'map'}">
+  <div class="container">
+    {intro(t['map_h'], t['map_p'].format(countries=join_names(country_names(lang), lang)), (t['map_more'], href(lang, 'projects')), lang)}
+    {map_block(lang)}
+  </div>
+</section>
+
+<section class="section tone-soft" id="{'jak-pracujemy' if lang == 'pl' else 'process'}">
+  <div class="container">
+    {intro(t['steps_h'], lang=lang)}
+    {steps_block(C.STEPS, lang)}
+  </div>
+</section>
+
+<section class="section tone-night" id="{'dlaczego-my' if lang == 'pl' else 'why-us'}">
+  <div class="container">
+    <div class="why">
+      <h2 class="h-display reveal">{typo(t['why_h'], lang)}</h2>
+      <p class="lit" data-lit>{lit(t['why_p'], lang)}</p>
+      <a class="btn btn--light btn--lg reveal" href="{href(lang, 'projects')}">{esc(t['why_btn'])}</a>
+    </div>
+    {feats(C.WHY, lang)}
+  </div>
+</section>
+
+<section class="section tone-light" id="{'kariera' if lang == 'pl' else 'careers'}" data-order="jobs">
+  <div class="container">
+    {intro(t['jobs_h'], t['jobs_p'], (t['jobs_more'], href(lang, 'careers')), lang)}
+    {job_cards(lang, C.JOBS_ON_HOME)}
+  </div>
+</section>
+
+<section class="section tone-soft" id="faq">
+  <div class="container">
+    {intro(t['faq_h'], lang=lang)}
+    {faq_block(C.FAQ_FIRMY, lang, 'firmy')}
+    {faq_block(C.FAQ_FACHOWCY, lang, 'fachowcy')}
+    <p class="center">{more(t['faq_more'], href(lang, 'faq'))}</p>
+  </div>
+</section>
+
+{cta_band(lang)}'''
+    org = {
+        '@context': 'https://schema.org', '@type': 'Organization', 'name': 'DD Volt', 'url': C.SITE_URL + '/',
+        'logo': C.SITE_URL + '/assets/apple-touch-icon.png', 'image': C.SITE_URL + '/assets/og.png',
+        'description': t['desc'], 'telephone': C.PHONE.replace(' ', ''), 'email': C.EMAIL,
+        'areaServed': {'@type': 'Place', 'name': 'Europe'},
+        'contactPoint': {'@type': 'ContactPoint', 'telephone': C.PHONE.replace(' ', ''), 'email': C.EMAIL,
+                         'contactType': 'sales', 'availableLanguage': ['pl', 'en']},
+    }
+    page(lang, 'home', body, scripts=('js/map-data.js', 'js/map.js'), extra_head=ld(org), main_cls='home')
+
+
+def build_services(lang):
+    t, u = C.T[lang]['services'], C.UI[lang]
+    rows = ''.join(f'''<article class="feature reveal" id="{s['id'][lang]}" data-art>
+      <div class="feature-art card">{ART[s['art']]}</div>
+      <div class="feature-body">
+        <h2 class="h-section">{typo(loc(s['title'], lang), lang)}</h2>
+        <p class="lead">{typo(loc(s['text'], lang), lang)}</p>
+        <p class="label">{esc(u['scope'])}</p>
+        {ticks(s['items'][lang], lang)}
       </div>
-      <a class="btn btn--outline" href="kariera.html">Wszystkie oferty {ICO["ar"]}</a>
-    </div>
-    <div class="grid grid-2 stagger">{job_cards() if False else ''}</div>
+    </article>''' for s in C.SERVICES)
+    sectors = ''.join(f'<li class="card"><h3 class="h-card">{typo(a, lang)}</h3><p>{typo(b, lang)}</p></li>' for a, b in t['sectors'])
+    body = page_head(t['h1'], t['lead'], lang) + f'''<section class="section tone-light">
+  <div class="container features">
+    {rows}
   </div>
 </section>
-
-<section class="section section--alt" id="faq">
+<section class="section tone-soft">
   <div class="container">
-    <div class="section-header reveal">
-      <span class="eyebrow">06 / FAQ</span>
-      <h2 class="display">Pytania, które <span class="hl">zawsze padają</span>.</h2>
-    </div>
-    <div class="reveal">
-      {faq_block(FAQ_FIRMY[:4],'firmy')}
-      {faq_block(FAQ_FACHOWCY[:4],'fachowcy')}
-    </div>
-    <a class="link" style="margin-top:32px" href="faq.html">Wszystkie pytania {ICO["ar"]}</a>
+    {intro(t['sectors_h'], lang=lang)}
+    <ul class="grid grid-3 stagger plain">{sectors}</ul>
   </div>
 </section>
-
-{cta_band()}
-'''
-
-JOBS = [
-  ('Elektryk przemysłowy','Umowa / B2B','Europa — wyjazdy','Automotive',['Czytasz schematy elektryczne i e-plan','Masz doświadczenie w trasach i okablowaniu','Jesteś gotów na wyjazdy na projekty w Europie']),
-  ('Monter mechanik — roboty i linie','Umowa / B2B','Europa — wyjazdy','Przemysł',['Stawiasz roboty i urządzenia według layoutu','Pracujesz w zespole z liderem na miejscu','Jesteś gotów na wyjazdy na projekty w Europie']),
-  ('Lider zespołu — elektryka','Umowa / B2B','Europa — wyjazdy','Automotive',['Prowadziłeś ekipę minimum 5 osób na hali','Rozmawiasz z GW po angielsku albo niemiecku','Ustawiasz robotę tak, żeby szła do przodu']),
-]
-def job_cards(limit=None):
-  out = []
-  for t, typ, loc, sec, items in JOBS[:limit]:
-    li = ''.join(f'<li>{ICO["check"]}<span>{i}</span></li>' for i in items)
-    out.append(f'''<article class="card job">
-      <div class="top"><span class="tag-chip tag-chip--soft">Rekrutacja otwarta</span><span class="label muted">{typ}</span></div>
-      <h3 class="heading">{t}</h3>
-      <span class="meta">{ICO["pin"]}{loc} · {sec}</span>
-      <ul>{li}</ul>
-      <div class="actions"><a class="btn" href="kontakt.html?dla=fachowcy">Aplikuj {ICO["aur"]}</a><a class="btn btn--outline" href="{PHONE_HREF}">{ICO["phone"]} Zadzwoń</a></div>
-    </article>''')
-  return ''.join(out)
-HOME = HOME.replace('<div class="grid grid-2 stagger"></div>', f'<div class="grid grid-2 stagger">{job_cards(2)}</div>')
-
-page('index.html','DD Volt — elektryka i mechanika linii produkcyjnych','Budujemy i podłączamy linie produkcyjne dla automotive i przemysłu w całej Europie. Elektryka od A do Z i mechanika: roboty, urządzenia, szafy.', HOME, map_script=True)
-
-# ---------------------------------------------------------------- oferta
-OFERTA = f'''<section class="page-head on-night">
+<section class="section tone-light">
   <div class="container">
-    <span class="eyebrow">Oferta</span>
-    <h1 class="display-xl words">{words('Od schematu do')} <span class="hl">{words('podłączonego robota.')}</span></h1>
-    <p class="lead">Trzy zakresy, jedna ekipa. Wchodzimy na halę z dokumentacją od GW i oddajemy zakres gotowy do dalszych prac.</p>
+    {intro(t['steps_h'], lang=lang)}
+    {steps_block(C.STEPS, lang)}
   </div>
 </section>
-<section class="section">
+<section class="section tone-soft">
   <div class="container">
-    <div class="grid grid-3 stagger">{service_cards(link=False)}</div>
-  </div>
-</section>
-<section class="section section--alt">
-  <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">Branże</span><h2 class="display">Gdzie to <span class="hl">działa</span>.</h2></div>
-    <div class="grid grid-3 stagger">
-      <div class="card"><span class="label muted">01</span><h3 class="heading" style="margin-top:12px">Automotive</h3><p class="muted" style="margin-top:8px">Linie montażowe, lakiernie, stanowiska robotów. Ford, Tesla, BMW, Audi.</p></div>
-      <div class="card"><span class="label muted">02</span><h3 class="heading" style="margin-top:12px">Przemysł i spożywka</h3><p class="muted" style="margin-top:8px">Rozlewnie, piece przemysłowe, podłączenia silników i urządzeń na halach.</p></div>
-      <div class="card"><span class="label muted">03</span><h3 class="heading" style="margin-top:12px">Obiekty</h3><p class="muted" style="margin-top:8px">Serwerownie, szkoły, oświetlenie i siła. Mieszkaniówka, gdy ma to sens.</p></div>
+    {intro(t['reach_h'], t['reach_p'], lang=lang)}
+    <div class="stats stats--3 reveal" data-stats>
+      {stat(len(C.COUNTRIES), '', t['stat_countries'], lang)}
+      {stat(C.PROJECTS_COUNT, '+', t['stat_projects'], lang)}
+      {stat(1, u['stat_reply_unit'], u['stat_reply'], lang)}
     </div>
   </div>
 </section>
-<section class="section">
+{cta_band(lang)}'''
+    page(lang, 'services', body, lock='firmy')
+
+
+def build_projects(lang):
+    t = C.T[lang]['projects']
+    body = page_head(t['h1'], t['lead'], lang) + f'''<section class="section section--flush tone-night" id="{'mapa' if lang == 'pl' else 'map'}">
   <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">Jak pracujemy</span><h2 class="display">Cztery kroki, <span class="hl">jeden lider</span>.</h2></div>
-    {steps_block()}
+    <h2 class="sr-only">{esc(t['map_h'])}</h2>
+    {map_block(lang)}
   </div>
 </section>
-<section class="section section--alt">
+<section class="section tone-light">
   <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">Zasięg</span><h2 class="display">Cała Europa. <span class="hl">Rozmawiamy też o USA.</span></h2>
-    <p class="lead">Ekipa jeździ tam, gdzie jest projekt: Niemcy, Włochy, Węgry, Polska. Dalsze kierunki ustalamy indywidualnie.</p></div>
-    <div class="stats reveal">
-      <div class="stat"><div class="num"><span data-count="4">0</span></div><span class="label">Kraje z realizacjami</span></div>
-      <div class="stat"><div class="num"><span data-count="12">0</span><span class="unit">+</span></div><span class="label">Projekty na hali</span></div>
-      <div class="stat"><div class="num"><span data-count="1">0</span><span class="unit">dzień</span></div><span class="label">Czas odpowiedzi na zapytanie</span></div>
+    {intro(t['list_h'], lang=lang)}
+    {project_cards(lang)}
+  </div>
+</section>
+{cta_band(lang)}'''
+    page(lang, 'projects', body, scripts=('js/map-data.js', 'js/map.js'))
+
+
+def build_about(lang):
+    t = C.T[lang]['about']
+    story = ''.join(f'<p>{typo(p, lang)}</p>' for p in t['story'])
+    body = page_head(t['h1'], t['lead'], lang) + f'''<section class="section tone-light">
+  <div class="container story">
+    <div class="story-text reveal">
+      <h2 class="h-display">{typo(t['story_h'], lang)}</h2>
+      {story}
+      <a class="btn btn--light" href="{href(lang, 'projects')}">{esc(t['btn'])}</a>
     </div>
+    <div class="story-stats card reveal" style="--d:1" data-stats>{main_stats(lang)}</div>
   </div>
 </section>
-{cta_band()}
-'''
-page('oferta.html','Oferta — DD Volt','Elektryka od A do Z, mechanika i roboty, obiekty. Zakres usług DD Volt dla automotive, przemysłu i budynków.', OFERTA)
+<section class="section tone-night">
+  <div class="container">
+    {intro(t['rules_h'], lang=lang)}
+    {feats(t['rules'], lang)}
+  </div>
+</section>
+{cta_band(lang)}'''
+    page(lang, 'about', body)
 
-# ---------------------------------------------------------------- realizacje
-REALIZACJE = f'''<section class="page-head on-night">
-  <div class="container">
-    <span class="eyebrow">Realizacje</span>
-    <h1 class="display-xl words">{words('Gdzie już')} <span class="hl">{words('pracowaliśmy.')}</span></h1>
-    <p class="lead">Nazwy klientów końcowych podajemy uczciwie, z rolą. Zdjęcia z zakładów pokazujemy po zgodzie generalnego wykonawcy.</p>
-    <div class="tags"><span class="tag-chip">Niemcy</span><span class="tag-chip">Włochy</span><span class="tag-chip">Węgry</span><span class="tag-chip">Polska</span></div>
-  </div>
-</section>
-{map_block('Mapa','Każdy pin to <span class="hl">hala</span>, nie biuro.','Filtruj po branży albo kraju. Lista obok działa z klawiatury.')}
-<section class="section">
-  <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">Case study</span><h2 class="display">Projekty <span class="hl">po kolei</span>.</h2></div>
-    <div class="grid grid-3 stagger">{project_cards()}</div>
-  </div>
-</section>
-{cta_band()}
-'''
-page('realizacje.html','Realizacje — DD Volt','Mapa i lista realizacji DD Volt: Ford w Kolonii, Tesla, BMW w Monachium, Audi w Győr, lakiernia w Bergamo, serwerownia Microsoft i projekty w Polsce.', REALIZACJE, map_script=True)
 
-# ---------------------------------------------------------------- o nas
-ONAS = f'''<section class="page-head on-night">
+def build_careers(lang):
+    t, u = C.T[lang]['careers'], C.UI[lang]
+    chips = (f'<ul class="tags rise" style="--d:3"><li class="tag tag--live"><span class="dot" aria-hidden="true"></span>{esc(u["open_recruitment"])}</li>'
+             + ''.join(f'<li class="tag">{esc(c)}</li>' for c in t['chips']) + '</ul>')
+    steps = [({lang: a}, {lang: b}) for a, b in t['process']]
+    body = page_head(t['h1'], t['lead'], lang, chips) + f'''<section class="section tone-light" id="{'oferty' if lang == 'pl' else 'positions'}">
   <div class="container">
-    <span class="eyebrow">O nas</span>
-    <h1 class="display-xl words">{words('Ekipa, która wraca')} <span class="hl">{words('na kolejny projekt.')}</span></h1>
-    <p class="lead">DD Volt to elektrycy i mechanicy z doświadczeniem na liniach Forda, Tesli, BMW i Audi. Firma wyrosła z jednej zasady: robota ma iść do przodu, a mosty zostają całe.</p>
+    {intro(t['jobs_h'], lang=lang)}
+    {job_cards(lang, cols=2)}
   </div>
 </section>
-<section class="section">
+<section class="section tone-soft">
   <div class="container">
-    <div class="why" style="align-items:center">
-      <div class="reveal">
-        <span class="eyebrow">Historia</span>
-        <h2 class="display" style="margin-top:16px">Od Kolonii <span class="hl">do własnej firmy</span>.</h2>
-        <p class="lead" style="margin-top:24px">Zaczęło się od dwóch lat na linii i lakierni Forda w Kolonii, jako podwykonawca SICA. Potem Audi na Węgrzech, serwerownia Microsoftu, szkoły w Niemczech. Rok na Tesli to już własna działalność. Dalej Bergamo, Frankfurt, Monachium i projekty w Polsce.</p>
-        <p class="lead" style="margin-top:16px">Dziś prowadzimy ekipy do 20 osób i bierzemy zakresy elektryczne i mechaniczne razem.</p>
-      </div>
-      <div class="card" style="padding:0;overflow:hidden;background:var(--night);aspect-ratio:4/5;position:relative;background-image:repeating-linear-gradient(135deg,transparent 0 14px,#1c1c1c 14px 15px)">
-        <span class="label" style="position:absolute;left:16px;bottom:16px;color:var(--on-night-muted)">Zdjęcie ekipy przy pracy</span>
-      </div>
-    </div>
+    {intro(t['process_h'], lang=lang)}
+    {steps_block(steps, lang)}
   </div>
 </section>
-<section class="section section--night on-night">
+<section class="section tone-light">
   <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">Zasady</span><h2 class="display">Jak robimy <span class="hl">robotę</span>.</h2></div>
-    <ul class="why-list stagger" style="max-width:860px">
-      <li><span class="idx">01</span><div><h3>Konkret zamiast obietnic</h3><p>Mówimy, co zrobimy, w jakim czasie i iloma ludźmi. Potem to robimy.</p></div></li>
-      <li><span class="idx">02</span><div><h3>Dokumentacja na stole, nie w głowie</h3><p>Pracujemy według e-planu i layoutu. Zmiany wracają do GW na piśmie.</p></div></li>
-      <li><span class="idx">03</span><div><h3>Lider odpowiada za tempo</h3><p>Ustawia robotę, rozwiązuje problemy na miejscu i trzyma kontakt z generalnym wykonawcą.</p></div></li>
-      <li><span class="idx">04</span><div><h3>Ludzie wracają, bo warunki są jasne</h3><p>Forma współpracy, zakwaterowanie i stawki ustalone przed wyjazdem.</p></div></li>
-    </ul>
+    {intro(t['faq_h'], lang=lang)}
+    {faq_block(C.FAQ_FACHOWCY, lang)}
   </div>
 </section>
-<section class="section section--alt">
-  <div class="container">
-    <div class="stats stats--4 reveal">
-      <div class="stat"><div class="num"><span data-count="12">0</span><span class="unit">+</span></div><span class="label">Realizacji</span></div>
-      <div class="stat"><div class="num"><span data-count="4">0</span></div><span class="label">Kraje</span></div>
-      <div class="stat"><div class="num"><span data-count="24">0</span><span class="unit">mies.</span></div><span class="label">Najdłuższy projekt</span></div>
-      <div class="stat"><div class="num"><span data-count="20">0</span><span class="unit">osób</span></div><span class="label">Największa ekipa</span></div>
-    </div>
-  </div>
-</section>
-{cta_band()}
-'''
-page('o-nas.html','O nas — DD Volt','Kim jest ekipa DD Volt: elektrycy i mechanicy z doświadczeniem na liniach Forda, Tesli, BMW i Audi.', ONAS)
+{cta_band(lang)}'''
+    page(lang, 'careers', body, lock='fachowcy')
 
-# ---------------------------------------------------------------- kariera
-KARIERA = f'''<section class="page-head on-night">
-  <div class="container">
-    <span class="eyebrow">Kariera</span>
-    <h1 class="display-xl words">{words('Jeździsz na montaże?')} <span class="hl">{words('Jedź z ekipą, która dowozi.')}</span></h1>
-    <p class="lead">Umowa albo B2B. Projekty w Niemczech, we Włoszech, na Węgrzech i w Polsce. Lider na miejscu i warunki ustalone przed wyjazdem.</p>
-    <div class="tags"><span class="tag-chip tag-chip--soft">Rekrutacja otwarta</span><span class="tag-chip">Umowa / B2B</span><span class="tag-chip">Europa</span></div>
-  </div>
-</section>
-<section class="section">
-  <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">Oferty</span><h2 class="display">Kogo <span class="hl">szukamy</span>.</h2></div>
-    <div class="grid grid-3 stagger">{job_cards()}</div>
-  </div>
-</section>
-<section class="section section--alt">
-  <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">Jak to wygląda</span><h2 class="display">Od telefonu <span class="hl">do hali</span>.</h2></div>
-    <div class="steps">
-      <div class="step"><span class="idx">01</span><h3 class="heading">Rozmowa</h3><p>Dzwonisz albo piszesz. Pytamy o doświadczenie, nie o CV na trzy strony.</p></div>
-      <div class="step"><span class="idx">02</span><h3 class="heading">Warunki</h3><p>Forma, stawka, zakwaterowanie, termin. Wszystko przed wyjazdem.</p></div>
-      <div class="step"><span class="idx">03</span><h3 class="heading">Wyjazd</h3><p>Jedziesz z ekipą i liderem, który zna projekt i GW.</p></div>
-      <div class="step"><span class="idx">04</span><h3 class="heading">Kolejny projekt</h3><p>Dobrzy ludzie dostają propozycję następnego wyjazdu jako pierwsi.</p></div>
-    </div>
-  </div>
-</section>
-<section class="section">
-  <div class="container">
-    <div class="section-header reveal"><span class="eyebrow">FAQ</span><h2 class="display">Pytania <span class="hl">fachowców</span>.</h2></div>
-    <div class="reveal">{faq_block(FAQ_FACHOWCY)}</div>
-  </div>
-</section>
-{cta_band()}
-'''
-page('kariera.html','Kariera — DD Volt','Praca dla elektryków przemysłowych i monterów mechaników: projekty w Europie, umowa albo B2B, lider na miejscu.', KARIERA)
 
-# ---------------------------------------------------------------- faq
-FAQ = f'''<section class="page-head on-night">
+def build_faq(lang):
+    t = C.T[lang]['faq']
+    schema = {'@context': 'https://schema.org', '@type': 'FAQPage', 'mainEntity': [
+        {'@type': 'Question', 'name': q[lang], 'acceptedAnswer': {'@type': 'Answer', 'text': a[lang]}}
+        for q, a in C.FAQ_FIRMY + C.FAQ_FACHOWCY]}
+    body = page_head(t['h1'], t['lead'], lang, f'<div class="rise" style="--d:3">{seg(lang)}</div>') + f'''<section class="section tone-light">
   <div class="container">
-    <span class="eyebrow">FAQ</span>
-    <h1 class="display-xl words">{words('Pytania, które')} <span class="hl">{words('zawsze padają.')}</span></h1>
-    <p class="lead">Osobno dla firm i dla fachowców. Przełącz ścieżkę w nagłówku, żeby zobaczyć drugi zestaw.</p>
+    {faq_block(C.FAQ_FIRMY, lang, 'firmy')}
+    {faq_block(C.FAQ_FACHOWCY, lang, 'fachowcy')}
   </div>
 </section>
-<section class="section">
-  <div class="container">
-    <div class="section-header reveal"><span class="eyebrow" data-for="firmy">Dla firm</span><span class="eyebrow" data-for="fachowcy">Dla fachowców</span></div>
-    <div class="reveal">{faq_block(FAQ_FIRMY,'firmy')}{faq_block(FAQ_FACHOWCY,'fachowcy')}</div>
-  </div>
-</section>
-{cta_band()}
-'''
-page('faq.html','FAQ — DD Volt','Najczęstsze pytania firm i fachowców o współpracę z DD Volt.', FAQ)
+{cta_band(lang)}'''
+    page(lang, 'faq', body, extra_head=ld(schema))
 
-# ---------------------------------------------------------------- kontakt
-KONTAKT = f'''<section class="page-head on-night">
-  <div class="container">
-    <span class="eyebrow">Kontakt</span>
-    <h1 class="display-xl words" data-for="firmy">{words('Policzmy')} <span class="hl">{words('Twój projekt.')}</span></h1>
-    <h1 class="display-xl words" data-for="fachowcy">{words('Napisz, gdzie')} <span class="hl">{words('robiłeś.')}</span></h1>
-    <p class="lead">Odpisujemy w ciągu jednego dnia roboczego. Telefon działa szybciej.</p>
-  </div>
-</section>
-<section class="section">
-  <div class="container">
-    <div class="contact-grid">
-      <div class="reveal">
-        <span class="eyebrow">Bezpośrednio</span>
-        <div class="contact-list">
-          <a href="{PHONE_HREF}">{ICO["phone"]}{PHONE}</a>
-          <a href="mailto:{EMAIL}">{ICO["mail"]}{EMAIL}</a>
-        </div>
-        <p class="muted" style="margin-top:32px;max-width:36ch" data-for="firmy">Do wyceny potrzebujemy: branżę, lokalizację, termin i zakres (elektryka, mechanika czy oba). Schematy mile widziane, ale nie na start.</p>
-        <p class="muted" style="margin-top:32px;max-width:36ch" data-for="fachowcy">Napisz, na jakich projektach byłeś, co robiłeś i od kiedy możesz jechać. Resztę ustalimy przez telefon.</p>
-      </div>
-      <form class="form reveal" data-delay="1" action="{FORM_ACTION}" method="POST" novalidate>
+
+def build_contact(lang):
+    t, u = C.T[lang]['contact'], C.UI[lang]
+    f = t['form']
+    opt = f'<span class="opt">{esc(f["optional"])}</span>'
+    scope = ''.join(f'<label class="pick"><input type="checkbox" name="zakres" value="{attr(o)}"><span>{esc(o)}</span></label>' for o in f['scope_opts'])
+    roles = ''.join(f'<label class="pick"><input type="radio" name="stanowisko" value="{attr(lab)}" data-role="{slug}"><span>{esc(lab)}</span></label>'
+                    for slug, lab in f['role_opts'])
+    msgs = {k: f[k] for k in ('err_name', 'err_phone', 'err_email', 'err_consent', 'sending', 'mailto', 'draft', 'draft_clear',
+                              'mail_subject_firmy', 'mail_subject_fach', 'topic_firmy', 'topic_fach')}
+    msgs['fail'] = f['fail'].format(phone=C.PHONE, email=C.EMAIL)
+    msgs['email'] = C.EMAIL
+    body = page_head(t['h1_firmy'], t['lead'], lang, h1_alt=t['h1_fach']) + f'''<section class="section tone-light">
+  <div class="container contact">
+    <aside class="contact-side reveal">
+      <h2 class="label">{esc(t['direct'])}</h2>
+      <a class="contact-big" href="{C.PHONE_HREF}" data-phone="{attr(C.PHONE)}"><span class="sr-only">{esc(t['phone_label'])}: </span><span>{esc(C.PHONE)}</span></a>
+      <a class="contact-mail" href="mailto:{C.EMAIL}"><span class="sr-only">{esc(t['email_label'])}: </span>{esc(C.EMAIL)}</a>
+      <p class="contact-note">{typo(t['note'], lang)}</p>
+      <a class="more" data-for="fachowcy" href="mailto:{C.EMAIL}?subject={attr(t['cv_subject']).replace(' ', '%20')}">{esc(t['cv_mail'])}{ico('chev')}</a>
+    </aside>
+    <form class="form card reveal" id="{FORM_ID[lang]}" style="--d:1" action="{attr(C.FORM_ACTION)}" method="POST" novalidate data-form data-lang="{lang}">
+      <div class="form-fields">
+        <fieldset class="form-topic">
+          <legend>{esc(f['legend'])}</legend>
+          <div class="seg seg--light seg--wide" role="group" aria-label="{attr(f['legend'])}" data-audience-switch>
+            <span class="seg-thumb" aria-hidden="true"></span>
+            <button type="button" data-value="firmy" aria-pressed="true">{esc(f['topic_firmy'])}</button>
+            <button type="button" data-value="fachowcy" aria-pressed="false">{esc(f['topic_fach'])}</button>
+          </div>
+        </fieldset>
+        <p class="form-draft" hidden data-draft>{esc(f['draft'])} <button type="button" data-draft-clear>{esc(f['draft_clear'])}</button></p>
         <div class="row">
-          <div class="field"><label for="jako">Piszę jako</label>
-            <select id="jako" name="jako"><option value="firma">Firma — zapytanie o projekt</option><option value="fachowiec">Fachowiec — aplikacja</option></select></div>
-          <div class="field" data-required><label for="imie">Imię i nazwisko <span class="req">*</span></label><input id="imie" name="imie" autocomplete="name"><span class="error">{ICO["alert"]}Podaj imię i nazwisko.</span></div>
+          <div class="field" data-field="name">
+            <label for="f-name">{esc(f['name'])}</label>
+            <input id="f-name" name="imie" type="text" autocomplete="name" autocapitalize="words" enterkeyhint="next" required aria-describedby="e-name">
+            <p class="error" id="e-name" hidden>{ico('alert')}<span>{esc(f['err_name'])}</span></p>
+          </div>
+          <div class="field" data-field="phone">
+            <label for="f-phone">{esc(f['phone'])}</label>
+            <input id="f-phone" name="telefon" type="tel" inputmode="tel" autocomplete="tel" enterkeyhint="next" placeholder="+48 600 000 000" required aria-describedby="e-phone">
+            <p class="error" id="e-phone" hidden>{ico('alert')}<span>{esc(f['err_phone'])}</span></p>
+          </div>
         </div>
         <div class="row">
-          <div class="field" data-required><label for="tel">Telefon <span class="req">*</span></label><input id="tel" name="telefon" type="tel" autocomplete="tel" placeholder="+48 600 000 000"><span class="error">{ICO["alert"]}Podaj numer telefonu, żebyśmy mogli oddzwonić.</span></div>
-          <div class="field"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="email" placeholder="jan@firma.pl"></div>
+          <div class="field" data-field="email">
+            <label for="f-email">{esc(f['email'])} {opt}</label>
+            <input id="f-email" name="email" type="email" inputmode="email" autocomplete="email" spellcheck="false" enterkeyhint="next" aria-describedby="e-email">
+            <p class="error" id="e-email" hidden>{ico('alert')}<span>{esc(f['err_email'])}</span></p>
+          </div>
+          <div class="field" data-for="firmy" data-group="firmy">
+            <label for="f-company">{esc(f['company'])} {opt}</label>
+            <input id="f-company" name="firma" type="text" autocomplete="organization" enterkeyhint="next">
+          </div>
+          <div class="field" data-for="fachowcy" data-group="fachowcy">
+            <label for="f-avail">{esc(f['avail'])} {opt}</label>
+            <input id="f-avail" name="dostepnosc" type="text" enterkeyhint="next" placeholder="{attr(f['avail_ph'])}">
+          </div>
         </div>
-        <div class="field"><label for="firma">Firma</label><input id="firma" name="firma" autocomplete="organization"></div>
-        <div class="field" data-required><label for="msg">Wiadomość <span class="req">*</span></label><textarea id="msg" name="wiadomosc"></textarea>
-          <span class="hint" data-for="firmy">Branża, lokalizacja, termin i zakres: elektryka, mechanika czy oba.</span>
-          <span class="hint" data-for="fachowcy">Projekty, na których byłeś, i od kiedy możesz jechać.</span>
-          <span class="error">{ICO["alert"]}Napisz kilka zdań o projekcie.</span></div>
-        <div class="field"><label class="body-sm" style="display:flex;gap:10px;align-items:flex-start;font-weight:400;color:var(--ink-muted)"><input type="checkbox" name="zgoda" required style="width:18px;height:18px;min-height:0;margin-top:3px"> Wyrażam zgodę na kontakt w sprawie mojego zapytania. <a href="polityka-prywatnosci.html" style="text-decoration:underline">Polityka prywatności</a>.</label></div>
-        <div class="flex">
-          <button class="btn btn--lg" type="submit"><span data-for="firmy">Wyślij zapytanie</span><span data-for="fachowcy">Wyślij aplikację</span> {ICO["aur"]}</button>
-          <span class="form-status">{ICO["check"]}<span></span></span>
+        <div class="row" data-for="firmy" data-group="firmy">
+          <div class="field">
+            <label for="f-loc">{esc(f['location'])} {opt}</label>
+            <input id="f-loc" name="lokalizacja" type="text" enterkeyhint="next" placeholder="{attr(f['location_ph'])}">
+          </div>
+          <div class="field">
+            <label for="f-date">{esc(f['date'])} {opt}</label>
+            <input id="f-date" name="termin" type="text" enterkeyhint="next" placeholder="{attr(f['date_ph'])}">
+          </div>
         </div>
-      </form>
-    </div>
+        <fieldset class="field picks" data-for="firmy" data-group="firmy">
+          <legend>{esc(f['scope'])} {opt}</legend>
+          <div class="pick-row">{scope}</div>
+        </fieldset>
+        <fieldset class="field picks" data-for="fachowcy" data-group="fachowcy">
+          <legend>{esc(f['role'])} {opt}</legend>
+          <div class="pick-row">{roles}</div>
+        </fieldset>
+        <div class="field">
+          <label for="f-msg"><span data-for="firmy">{esc(f['msg_firmy'])}</span><span data-for="fachowcy">{esc(f['msg_fach'])}</span> {opt}</label>
+          <textarea id="f-msg" name="wiadomosc" rows="4" aria-describedby="h-msg"></textarea>
+          <p class="hint" id="h-msg"><span data-for="firmy">{typo(f['msg_firmy_hint'], lang)}</span><span data-for="fachowcy">{typo(f['msg_fach_hint'], lang)}</span></p>
+        </div>
+        <div class="field field--check" data-field="consent">
+          <label class="check"><input type="checkbox" name="zgoda" value="tak" required aria-describedby="e-consent"><span class="check-box" aria-hidden="true">{ico('check')}</span>
+            <span>{typo(f['consent'], lang)} <a href="{href(lang, 'privacy')}">{esc(f['consent_link'])}</a></span></label>
+          <p class="error" id="e-consent" hidden>{ico('alert')}<span>{esc(f['err_consent'])}</span></p>
+        </div>
+        <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
+        <input type="hidden" name="rodzaj" value="">
+        <input type="hidden" name="jezyk" value="{lang}">
+        <div class="form-submit">
+          <button class="btn btn--primary btn--lg" type="submit"><span class="btn-label"><span data-for="firmy">{esc(f['submit_firmy'])}</span><span data-for="fachowcy">{esc(f['submit_fach'])}</span></span><span class="spinner" aria-hidden="true"></span></button>
+          <p class="form-status" role="status" aria-live="polite" data-status></p>
+        </div>
+      </div>
+      <div class="form-done" hidden data-done tabindex="-1">
+        <svg class="done-mark" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="28"/><path d="M20 33l8.5 8.5L45 24"/></svg>
+        <h2 class="h-card">{esc(f['ok_h'])}</h2>
+        <p>{esc(f['ok_p'])}</p>
+        <button class="btn btn--ghost" type="button" data-again>{esc(f['ok_again'])}</button>
+      </div>
+      <script type="application/json" data-form-msg>{json.dumps(msgs, ensure_ascii=False, separators=(',', ':'))}</script>
+    </form>
   </div>
 </section>
 '''
-page('kontakt.html','Kontakt — DD Volt','Wyceń projekt albo aplikuj do ekipy DD Volt. Odpowiadamy w ciągu jednego dnia roboczego.', KONTAKT)
+    page(lang, 'contact', body, dock=False)
 
-# ---------------------------------------------------------------- polityki
-def legal(name, title, body):
-  html = f'''<section class="page-head on-night"><div class="container"><span class="eyebrow">Dokumenty</span><h1 class="display" style="margin-top:16px">{title}</h1></div></section>
-<section class="section"><div class="container"><div class="prose">{body}</div></div></section>'''
-  page(name, f'{title} — DD Volt', title, html)
 
-legal('polityka-prywatnosci.html','Polityka prywatności','''
-<p>Administratorem danych osobowych jest DD Volt [uzupełnij: pełna nazwa, adres, NIP]. Kontakt: <a href="mailto:kontakt@ddvolt.pl">kontakt@ddvolt.pl</a>.</p>
-<h2>Jakie dane zbieramy</h2>
-<p>Dane podane w formularzu kontaktowym: imię i nazwisko, telefon, e-mail, nazwa firmy i treść wiadomości. Nie zbieramy danych w innych celach.</p>
-<h2>Po co</h2>
-<ul><li>Odpowiedź na zapytanie o wycenę albo aplikację (art. 6 ust. 1 lit. b RODO).</li><li>Rekrutacja, gdy piszesz jako fachowiec (art. 6 ust. 1 lit. a i b RODO).</li></ul>
-<h2>Jak długo</h2>
-<p>Zapytania: do zakończenia rozmów, maksymalnie 12 miesięcy. Aplikacje: do zakończenia rekrutacji, chyba że zgodzisz się na dłużej.</p>
-<h2>Komu przekazujemy</h2>
-<p>Dostawcy formularza (Formspree) i poczty. Nie sprzedajemy danych.</p>
-<h2>Twoje prawa</h2>
-<p>Dostęp, sprostowanie, usunięcie, ograniczenie, sprzeciw, przeniesienie danych i skarga do Prezesa UODO. Napisz na adres wyżej.</p>
-''')
+def build_legal(lang, key):
+    t = C.T[lang][key]
+    body = page_head(t['h1'], None, lang) + f'''<section class="section tone-light">
+  <div class="container"><div class="prose">{t['body'].format(email=C.EMAIL)}</div></div>
+</section>
+'''
+    page(lang, key, body)
 
-legal('polityka-cookies.html','Polityka cookies','''
-<p>Strona DD Volt używa tylko tego, co potrzebne do działania.</p>
-<h2>Co zapisujemy w przeglądarce</h2>
-<ul><li><code>dd-audience</code> — wybrana ścieżka (firmy / fachowcy).</li><li><code>dd-theme</code> — motyw jasny albo ciemny.</li><li><code>dd-cookies</code> — informacja, że widziałeś tę belkę.</li></ul>
-<p>To dane w localStorage, nie trafiają do nas ani do nikogo innego.</p>
-<h2>Zewnętrzne zasoby</h2>
-<ul><li>CARTO / OpenStreetMap — kafle mapy realizacji. Przy ładowaniu kafli dostawca widzi Twój adres IP.</li></ul>
-<p>Czcionki i biblioteka mapy są hostowane na naszym serwerze.</p>
-<h2>Brak analityki</h2>
-<p>Nie używamy Google Analytics, pikseli reklamowych ani innych narzędzi śledzących.</p>
-''')
 
-print('OK')
+def build_404():
+    """Jedna strona błędu dla całej domeny. Adresy od korzenia (/), bo 404 może wypaść w dowolnym katalogu."""
+    pl, en = C.T['pl']['e404'], C.T['en']['e404']
+    doc = f'''<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(pl['title'])}</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<style>
+@font-face{{font-family:"Sofia Sans";src:url(/assets/fonts/sofia-sans-latin.woff2) format("woff2");font-weight:1 1000;font-display:swap}}
+*{{box-sizing:border-box}}html,body{{height:100%}}
+body{{margin:0;display:grid;place-items:center;background:#000;color:#f5f5f7;font:17px/1.5 "Sofia Sans",system-ui,-apple-system,"Segoe UI",sans-serif;text-align:center;padding:24px;-webkit-font-smoothing:antialiased}}
+svg{{width:44px;height:66px;fill:#f25500;margin-bottom:28px}}
+h1{{font-size:clamp(2rem,6vw,3.5rem);line-height:1.05;letter-spacing:-.02em;margin:0 0 .4em}}
+p{{color:#a1a1a6;margin:0 0 .3em}}p[lang=en]{{color:#86868b}}
+nav{{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:32px}}
+a{{display:inline-flex;align-items:center;height:48px;padding:0 24px;border-radius:999px;font-weight:600;text-decoration:none;background:#f25500;color:#000}}
+a+a{{background:none;color:#f5f5f7;box-shadow:inset 0 0 0 1px #48484a}}
+a:focus-visible{{outline:2px solid #fff;outline-offset:3px}}
+</style>
+</head>
+<body>
+<main>
+<svg viewBox="0 0 64 96" aria-hidden="true"><path d="{BOLT}"/></svg>
+<h1>{esc(pl['h1'])}</h1>
+<p>{esc(pl['p'])}</p>
+<p lang="en">{esc(en['h1'])}. {esc(en['p'])}</p>
+<nav><a href="/">{esc(pl['btn'])}</a><a href="/en/" lang="en">{esc(en['btn'])}</a></nav>
+</main>
+</body>
+</html>
+'''
+    write('404.html', doc)
+
+
+def build_seo():
+    urls = []
+    for key in C.PAGES:
+        for lang in LANGS:
+            alts = ''.join(f'<xhtml:link rel="alternate" hreflang="{l}" href="{abs_url(l, key)}"/>' for l in LANGS)
+            alts += f'<xhtml:link rel="alternate" hreflang="x-default" href="{abs_url("pl", key)}"/>'
+            urls.append(f'  <url><loc>{abs_url(lang, key)}</loc>{alts}</url>')
+    write('sitemap.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'
+          '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n'
+          + '\n'.join(urls) + '\n</urlset>\n')
+    write('robots.txt', f'User-agent: *\nAllow: /\n\nSitemap: {C.SITE_URL}/sitemap.xml\n')
+    write('.nojekyll', '')
+
+
+def main():
+    print('DD Volt: generuję strony')
+    for lang in LANGS:
+        build_home(lang)
+        build_services(lang)
+        build_projects(lang)
+        build_about(lang)
+        build_careers(lang)
+        build_faq(lang)
+        build_contact(lang)
+        build_legal(lang, 'privacy')
+        build_legal(lang, 'cookies')
+    build_404()
+    build_seo()
+    print('Gotowe.')
+
+
+if __name__ == '__main__':
+    main()
