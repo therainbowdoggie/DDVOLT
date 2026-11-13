@@ -65,9 +65,15 @@ sitemap.xml, robots.txt
   i kopiuje go do schowka.
 - **Formularz**: wymagane są tylko imię, telefon i zgoda. Niewysłana treść zapisuje się w przeglądarce
   i wraca po odświeżeniu. „Aplikuj” przy ofercie pracy otwiera formularz z zaznaczonym stanowiskiem.
-- **Mapa**: własny rysunek SVG, bez kafli i kluczy API. Kontury pochodzą z Natural Earth (domena publiczna);
+  Na telefonie pola dodatkowe (e-mail, firma, lokalizacja, termin) są zwinięte pod jednym przyciskiem.
+- **Mapa**: własny rysunek SVG, bez kafli i kluczy API. Można ją przesuwać palcem lub myszą i przybliżać
+  dwoma palcami, przyciskami +/−, dwuklikiem albo Ctrl + kółko (zwykłe kółko przewija stronę). Na krawędzi
+  mapy pionowy ruch palca przewija stronę. Kontury pochodzą z Natural Earth (domena publiczna);
   `tools/make_map.py` uruchamia się tylko przy zmianie kadru mapy.
-- **Ekran startowy** pokazuje się raz na sesję i znika sam, także gdyby skrypt się nie wczytał.
+- **Ekran startowy** (piorun): na stronie głównej przy każdym odświeżeniu i wejściu spoza serwisu,
+  na podstronach raz na sesję. Nie pojawia się przy klikaniu między podstronami. Znika sam, także gdyby
+  skrypt się nie wczytał.
+- **Motyw jasny / ciemny**: przełącznik w nagłówku (na telefonie w menu). Wybór zapisuje się w przeglądarce.
 - **Bez cookies i analityki**: strona nie pobiera niczego z zewnętrznych serwerów, więc nie ma paska zgód.
   Jeśli dodasz analitykę, pasek trzeba będzie przywrócić.
 - Działa bez JavaScriptu (treść jest widoczna, FAQ otwiera się natywnie) i szanuje ustawienie

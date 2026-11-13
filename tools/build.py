@@ -105,7 +105,12 @@ def country_name(cc, lang):
 def ico(name, cls=''):
     paths = {
         'chev': '<path d="M9 5.5l6.5 6.5L9 18.5"/>',
-        'phone': '<path d="M6.7 3.5h2.9l1.5 4-2 1.5a12 12 0 0 0 5.9 5.9l1.5-2 4 1.5v2.9a2 2 0 0 1-2.2 2A17.4 17.4 0 0 1 4.7 5.7a2 2 0 0 1 2-2.2z"/>',
+        'phone': ('<path class="hs" d="M6.7 3.5h2.9l1.5 4-2 1.5a12 12 0 0 0 5.9 5.9l1.5-2 4 1.5v2.9a2 2 0 0 1-2.2 2A17.4 17.4 0 0 1 4.7 5.7a2 2 0 0 1 2-2.2z"/>'
+                  '<path class="zap" d="M15.2 2.6l1.5 2-1.7.5 1.4 2"/><path class="zap" d="M19.2 6.6l2 1.3-1.5.9 1.8 1.4"/>'),
+        'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M5.3 18.7l1.5-1.5M17.2 6.8l1.5-1.5"/>',
+        'moon': '<path d="M20 14.2A8 8 0 0 1 9.8 4 8 8 0 1 0 20 14.2z"/>',
+        'plus': '<path d="M12 5.5v13M5.5 12h13"/>',
+        'minus': '<path d="M5.5 12h13"/>',
         'mail': '<rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3.5 7.5l8.5 6 8.5-6"/>',
         'pin': '<path d="M12 21s-6.5-5.5-6.5-10.6a6.5 6.5 0 0 1 13 0C18.5 15.5 12 21 12 21z"/><circle cx="12" cy="10.4" r="2.3"/>',
         'check': '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
@@ -116,7 +121,7 @@ def ico(name, cls=''):
         'link': '<path d="M10.5 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M13.5 10.5a4 4 0 0 0-5.7 0L5 13.3A4 4 0 0 0 10.7 19l1-1"/>',
         'globe': '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.9 3.1 2.9 13.9 0 17M12 3.5c-2.9 3.1-2.9 13.9 0 17"/>',
     }
-    c = ('i ' + cls).strip()
+    c = ('i ' + ('i-call ' if name == 'phone' else '') + cls).strip()
     return f'<svg class="{c}" viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>'
 
 
@@ -175,6 +180,12 @@ def seg(lang, extra=''):
   <button type="button" data-value="firmy" aria-pressed="true">{esc(u['aud_firmy'])}</button>
   <button type="button" data-value="fachowcy" aria-pressed="false">{esc(u['aud_fachowcy'])}</button>
 </div>'''
+
+
+def theme_switch(lang):
+    u = C.UI[lang]
+    return (f'<button class="theme-switch" type="button" role="switch" aria-checked="false" aria-label="{attr(u["theme"])}" data-theme-toggle>'
+            f'{ico("sun")}{ico("moon")}<span class="theme-thumb" aria-hidden="true"></span></button>')
 
 
 def call_btn(lang, cls='btn btn--ghost', extra=''):
@@ -327,6 +338,10 @@ def map_block(lang):
     <div class="map-stage">
       <svg class="map-svg" role="img" aria-label="{attr(u['map_aria'])}" data-map-svg preserveAspectRatio="xMidYMid slice"></svg>
       <button class="map-reset" type="button" hidden>{esc(u['map_reset'])}</button>
+      <div class="map-zoom">
+        <button type="button" data-zoom="in" aria-label="{attr(u['map_zoom_in'])}">{ico('plus')}</button>
+        <button type="button" data-zoom="out" aria-label="{attr(u['map_zoom_out'])}">{ico('minus')}</button>
+      </div>
     </div>
     <div class="map-side">
       <div class="map-head">
@@ -415,7 +430,12 @@ BOOT_JS = ("(function(){var d=document.documentElement;d.classList.remove('no-js
            "p=p==='jobs'?'fachowcy':p==='companies'?'firmy':p;"
            "var a=d.getAttribute('data-audience-lock')||(p==='fachowcy'||p==='firmy'?p:localStorage.getItem('dd-audience'));"
            "if(a==='fachowcy'||a==='firmy')d.setAttribute('data-audience',a);"
-           "if(!sessionStorage.getItem('dd-boot')&&!matchMedia('(prefers-reduced-motion: reduce)').matches)d.classList.add('is-booting');"
+           # animacja startowa: pierwsze wejście w sesji na dowolnej stronie; na stronie głównej także
+           # przy każdym odświeżeniu i wejściu spoza serwisu (nie przy klikaniu między podstronami)
+           "var again=false;if(d.hasAttribute('data-home')){var n=performance.getEntriesByType&&performance.getEntriesByType('navigation')[0],"
+           "ty=n?n.type:'',r=document.referrer,inside=!!location.host&&r.indexOf(location.protocol+'//'+location.host+'/')===0;"
+           "again=ty==='reload'||(ty==='navigate'&&!inside);}"
+           "if((again||!sessionStorage.getItem('dd-boot'))&&!matchMedia('(prefers-reduced-motion: reduce)').matches)d.classList.add('is-booting');"
            "}catch(e){}setTimeout(function(){if(!window.DDV_READY)d.classList.add('no-anim')},4500);})();")
 
 
@@ -429,6 +449,8 @@ def head(lang, key, title, desc, lock=None, extra_head='', noindex=False):
                       f'<link rel="alternate" hreflang="x-default" href="{abs_url("pl", key)}">\n'
                       f'<meta property="og:url" content="{abs_url(lang, key)}">\n')
     lock_attr = f' data-audience-lock="{lock}"' if lock else ''
+    if key == 'home':
+        lock_attr += ' data-home'
     robots = '<meta name="robots" content="noindex">\n' if noindex else ''
     return f'''<!DOCTYPE html>
 <html lang="{lang}" class="no-js" data-theme="light" data-audience="{lock or 'firmy'}"{lock_attr}>
@@ -486,6 +508,7 @@ def header(lang, key):
     <nav class="nav" aria-label="{attr(u['nav_aria'])}">{nav}</nav>
     <div class="bar-actions">
       <a class="bar-phone" href="{C.PHONE_HREF}" data-phone="{attr(C.PHONE)}">{ico('phone')}<span>{esc(C.PHONE)}</span></a>
+      {theme_switch(lang)}
       {lang_link('bar-lang', esc(u['lang_code']) + '<span class="sr-only">: ' + esc(u['lang_aria']) + '</span>')}
       {cta_pair(lang, 'btn--sm', key == 'contact')}
       <button class="menu-btn" type="button" aria-expanded="false" aria-controls="menu" aria-label="{attr(u['menu_open'])}" data-open="{attr(u['menu_open'])}" data-close="{attr(u['menu_close'])}"><span></span><span></span></button>
@@ -498,7 +521,7 @@ def header(lang, key):
   <div class="menu-foot">
     <div class="menu-row">
       {seg(lang)}
-      {lang_link('menu-lang', ico('globe') + esc(u['lang_switch']))}
+      <span class="menu-tools">{lang_link('menu-lang', ico('globe') + esc(u['lang_switch']))}{theme_switch(lang)}</span>
     </div>
     <div class="menu-cta">
       {cta_pair(lang, 'btn--lg', key == 'contact')}
@@ -545,7 +568,6 @@ def footer(lang, key, scripts=(), dock=True):
         <li><a href="{href(lang, 'privacy')}">{esc(u['privacy'])}</a></li>
         <li><a href="{href(lang, 'cookies')}">{esc(u['cookies'])}</a></li>
         <li><a href="{alt}" hreflang="{other}" lang="{other}">{esc(u['lang_switch'])}</a></li>
-        <li><button class="theme-toggle" type="button" data-theme-toggle>{ico('theme')}{esc(u['theme'])}</button></li>
       </ul>
     </div>
   </div>
@@ -835,6 +857,8 @@ def build_contact(lang):
             <p class="error" id="e-phone" hidden>{ico('alert')}<span>{esc(f['err_phone'])}</span></p>
           </div>
         </div>
+        <button class="form-more-btn" type="button" aria-expanded="false" aria-controls="form-more" hidden data-more-btn>{ico('plus')}<span data-for="firmy">{esc(f['more_firmy'])}</span><span data-for="fachowcy">{esc(f['more_fach'])}</span></button>
+        <div class="form-more" id="form-more" data-more><div class="form-more-in">
         <div class="row">
           <div class="field" data-field="email">
             <label for="f-email">{esc(f['email'])} {opt}</label>
@@ -860,6 +884,7 @@ def build_contact(lang):
             <input id="f-date" name="termin" type="text" enterkeyhint="next" placeholder="{attr(f['date_ph'])}">
           </div>
         </div>
+        </div></div>
         <fieldset class="field picks" data-for="firmy" data-group="firmy">
           <legend>{esc(f['scope'])} {opt}</legend>
           <div class="pick-row">{scope}</div>
@@ -870,8 +895,7 @@ def build_contact(lang):
         </fieldset>
         <div class="field">
           <label for="f-msg"><span data-for="firmy">{esc(f['msg_firmy'])}</span><span data-for="fachowcy">{esc(f['msg_fach'])}</span> {opt}</label>
-          <textarea id="f-msg" name="wiadomosc" rows="4" aria-describedby="h-msg"></textarea>
-          <p class="hint" id="h-msg"><span data-for="firmy">{typo(f['msg_firmy_hint'], lang)}</span><span data-for="fachowcy">{typo(f['msg_fach_hint'], lang)}</span></p>
+          <textarea id="f-msg" name="wiadomosc" rows="3" placeholder="{attr(f['msg_firmy_hint'])}" data-ph-firmy="{attr(f['msg_firmy_hint'])}" data-ph-fachowcy="{attr(f['msg_fach_hint'])}"></textarea>
         </div>
         <div class="field field--check" data-field="consent">
           <label class="check"><input type="checkbox" name="zgoda" value="tak" required aria-describedby="e-consent"><span class="check-box" aria-hidden="true">{ico('check')}</span>

@@ -89,13 +89,20 @@
   }
 
   /* ---------------------------------------------------------- motyw */
-  $$('[data-theme-toggle]').forEach(function (b) {
+  var themeBtns = $$('[data-theme-toggle]');
+  function syncTheme() {
+    var dark = html.getAttribute('data-theme') === 'dark';
+    themeBtns.forEach(function (b) { b.setAttribute('aria-checked', String(dark)); });
+  }
+  themeBtns.forEach(function (b) {
     b.addEventListener('click', function () {
       var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
       html.setAttribute('data-theme', next);
       local.set('dd-theme', next);
+      syncTheme();
     });
   });
+  syncTheme();
 
   /* ---------------------------------------------------------- telefon
      Na telefonie link otwiera wybieranie numeru. Na komputerze pierwsze kliknięcie
@@ -383,6 +390,27 @@
     });
     phone.addEventListener('blur', function () { phone.value = phone.value.trim(); });
 
+    /* telefon: e-mail, firma, lokalizacja i termin chowają się pod jednym przyciskiem */
+    var more = $('[data-more]', form), moreBtn = $('[data-more-btn]', form), moreIn = $('.form-more-in', form);
+    var small = matchMedia('(max-width: 599px)'), openTimer;
+    function moreFilled() { return $$('input', more).some(function (i) { return !i.disabled && i.value.trim(); }); }
+    function setMore(open) {
+      clearTimeout(openTimer);
+      more.classList.toggle('is-collapsed', !open);
+      more.classList.remove('is-open');
+      moreIn.inert = !open;
+      moreBtn.hidden = open || !small.matches;
+      moreBtn.setAttribute('aria-expanded', String(open));
+      if (open) openTimer = setTimeout(function () { more.classList.add('is-open'); }, 600); // po animacji: nie przycinaj obrysu fokusu
+    }
+    moreBtn.addEventListener('click', function () {
+      setMore(true);
+      var first = $('input:not([disabled])', more);
+      if (first) first.focus({ preventScroll: true });
+    });
+    more.addEventListener('change', function () { if (more.classList.contains('is-collapsed') && moreFilled()) setMore(true); }); // np. autouzupełnianie
+    small.addEventListener('change', function () { setMore(!small.matches || moreFilled() || !more.classList.contains('is-collapsed')); });
+
     function syncGroups() {
       var a = audience();
       $$('[data-group]', form).forEach(function (g) {
@@ -390,6 +418,8 @@
         $$('input, textarea', g).forEach(function (i) { i.disabled = off; });
       });
       form.elements.rodzaj.value = a === 'fachowcy' ? msg.topic_fach : msg.topic_firmy;
+      var note = form.elements.wiadomosc;   // podpowiedź w polu zależy od ścieżki
+      note.placeholder = note.getAttribute('data-ph-' + a) || '';
     }
     d.addEventListener('ddv:audience', function () { syncGroups(); queueSave(); });
 
@@ -428,8 +458,9 @@
     form.addEventListener('input', queueSave);
     form.addEventListener('change', queueSave);
     if (restore() && draftNote) draftNote.hidden = false;
+    setMore(!small.matches || moreFilled());
     $$('[data-draft-clear]', form).forEach(function (b) {
-      b.addEventListener('click', function () { clearTimeout(saveTimer); local.del(KEY); form.reset(); syncGroups(); draftNote.hidden = true; clearErrors(); });
+      b.addEventListener('click', function () { clearTimeout(saveTimer); local.del(KEY); form.reset(); syncGroups(); draftNote.hidden = true; clearErrors(); setMore(!small.matches); });
     });
 
     // stanowisko z linku „Aplikuj” przy ofercie pracy
@@ -475,13 +506,13 @@
       if (top < 70) window.scrollTo({ top: window.scrollY + top - 90, behavior: reduce ? 'auto' : 'smooth' });
     }
     $$('[data-again]', form).forEach(function (b) {
-      b.addEventListener('click', function () { form.reset(); syncGroups(); clearErrors(); doneBox.hidden = true; fieldsBox.hidden = false; form.elements.imie.focus(); });
+      b.addEventListener('click', function () { form.reset(); syncGroups(); clearErrors(); setMore(!small.matches); doneBox.hidden = true; fieldsBox.hidden = false; form.elements.imie.focus(); });
     });
 
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var bad = checked.filter(function (f) { return !validate(f, true); });
-      if (bad.length) { $('input', bad[0]).focus(); say('', false); return; }
+      if (bad.length) { if (more.contains(bad[0])) setMore(true); $('input', bad[0]).focus(); say('', false); return; }
       if (form.elements._gotcha.value) return;
       var action = form.getAttribute('action') || '';
       if (!action || action.indexOf('TWOJ_ID') > -1) { viaMail(); return; }

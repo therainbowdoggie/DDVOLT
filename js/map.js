@@ -2,7 +2,9 @@
    Mapa realizacji rysowana w SVG (bez kafli i kluczy API). Kontury krajów: js/map-data.js.
    Projekty i pinezki przychodzą ze strony w <script data-map-data> (generuje je tools/build.py
    z tools/content.py, więc danych nie edytuje się tutaj).
-   Linie między punktami to najkrótsza sieć łącząca widoczne realizacje, rysowana od głównego projektu. */
+   Linie między punktami to najkrótsza sieć łącząca widoczne realizacje, rysowana od głównego projektu.
+   Mapę można przesuwać palcem lub myszą, przybliżać dwoma palcami, przyciskami +/−, dwuklikiem
+   albo Ctrl + kółko (zwykłe kółko przewija stronę). */
 (function () {
   'use strict';
   var box = document.querySelector('[data-map]'), G = window.DDV_MAP;
@@ -55,7 +57,7 @@
       el('circle', { 'class': 'pin-hit', r: 22 }, g);
       var point = { id: p.id, x: pt.x, y: pt.y, g: g, text: text, order: pi };
       g.addEventListener('click', function () { select(p.id, { zoom: true, scroll: true }); });
-      g.addEventListener('pointerenter', function () { hover(p.id, true); });
+      g.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') hover(p.id, true); });   // podpis pod kursorem tylko dla myszy
       g.addEventListener('pointerleave', function () { hover(p.id, false); });
       points.push(point);
       byId[p.id].points.push(point);
@@ -63,7 +65,15 @@
   });
 
   /* ---------- kadr ---------- */
-  var view = { x: 0, y: 0, w: G.w, h: G.h }, target = view, frame = 0;
+  var view = { x: 0, y: 0, w: G.w, h: G.h }, target = view, frame = 0, glide = 0;
+  var MIN_W = 120;   // największe przybliżenie: szerokość kadru w jednostkach mapy
+  var zoomIn = box.querySelector('[data-zoom="in"]'), zoomOut = box.querySelector('[data-zoom="out"]');
+  function stopMotion() { cancelAnimationFrame(frame); cancelAnimationFrame(glide); glide = 0; }
+  function maxW() { return Math.min(G.w, G.h * aspect()); }
+  function bound(v) {   // kadr nie wychodzi poza mapę ani poza dozwolone przybliżenie
+    var w = Math.max(MIN_W, Math.min(maxW(), v.w)), h = w / aspect();
+    return { x: Math.min(Math.max(v.x, 0), G.w - w), y: Math.min(Math.max(v.y, 0), G.h - h), w: w, h: h };
+  }
   function aspect() { return (stage.clientWidth || 1) / (stage.clientHeight || 1); }
   function fit(pts, pad, minW) {
     var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, a = aspect();
@@ -82,10 +92,11 @@
     svg.style.setProperty('--k', ks);
     points.forEach(function (p) { p.g.setAttribute('transform', 'translate(' + p.x + ' ' + p.y + ') scale(' + ks + ')'); });
     labels.forEach(function (l) { l.g.setAttribute('transform', 'translate(' + l.x + ' ' + l.y + ') scale(' + ks + ')'); });
+    if (zoomIn) { zoomIn.disabled = v.w <= MIN_W + .5; zoomOut.disabled = v.w >= maxW() - .5; }
   }
-  function go(v, instant) {
+  function go(v, instant, ms) {
     target = v;
-    cancelAnimationFrame(frame);
+    stopMotion();
     points.forEach(function (p) { // etykieta po tej stronie pinezki, po której jest miejsce
       var left = (p.x - v.x) > v.w * .7;
       p.text.setAttribute('x', left ? -14 : 14);
@@ -94,23 +105,23 @@
     if (instant || reduce) { apply(v); return; }
     var from = view, t0 = performance.now();
     (function step(now) {
-      var t = Math.min(1, (now - t0) / 1100), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      var t = Math.min(1, (now - t0) / (ms || 1100)), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
       apply({ x: from.x + (v.x - from.x) * e, y: from.y + (v.y - from.y) * e, w: from.w + (v.w - from.w) * e, h: from.h + (v.h - from.h) * e });
       if (t < 1) frame = requestAnimationFrame(step);
     })(t0);
   }
 
   /* ---------- stan ---------- */
-  var filter = 'all', current = null, zoomed = false;
+  var filter = 'all', current = null, zoomed = false, manual = false;
   function shown(p) { return filter === 'all' || p.sector === filter; }
   function shownPoints() { return points.filter(function (p) { return shown(byId[p.id]); }); }
   function overview(instant) {
-    zoomed = false; resetBtn.hidden = true;
+    zoomed = false; manual = false; resetBtn.hidden = true;
     var pts = shownPoints();
     if (pts.length) go(fit(pts, .34, 380), instant);
   }
   function focus(id, instant) {
-    zoomed = true; resetBtn.hidden = false;
+    zoomed = true; manual = false; resetBtn.hidden = false;
     go(fit(byId[id].points, .9, 250), instant);
   }
 
@@ -224,9 +235,107 @@
   }
   chips.forEach(function (c) { c.addEventListener('click', function () { setFilter(c.getAttribute('data-filter')); }); });
 
+  /* ---------- przesuwanie i przybliżanie ---------- */
+  function byHand() { zoomed = true; manual = true; resetBtn.hidden = false; }
+  function zoomBy(factor, px, py, smooth) {   // px, py: punkt sceny (w pikselach), który zostaje pod palcem
+    var base = smooth ? target : view, r = stage.getBoundingClientRect();
+    var w = Math.max(MIN_W, Math.min(maxW(), base.w / factor)), h = w / aspect();
+    var v = bound({ x: base.x + (px / r.width) * (base.w - w), y: base.y + (py / r.height) * (base.h - h), w: w, h: h });
+    byHand();
+    if (smooth) go(v, false, 420); else { stopMotion(); target = v; apply(v); }
+  }
+  var ptrs = new Map(), origin = null, dragging = false, swallow = 0, vx = 0, vy = 0, lastT = 0;
+  function capture(id) { try { svg.setPointerCapture(id); } catch (err) {} }
+  function startDrag() {
+    if (dragging) return;
+    dragging = true; stopMotion(); target = view; byHand();
+    svg.classList.add('is-dragging');
+    points.forEach(function (pt) { pt.g.classList.remove('is-hover'); });
+  }
+  svg.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 1) { origin = { x: e.clientX, y: e.clientY }; dragging = false; vx = vy = 0; if (glide) stopMotion(); }
+    else if (ptrs.size === 2) { startDrag(); ptrs.forEach(function (_, id) { capture(id); }); }
+  });
+  svg.addEventListener('pointermove', function (e) {
+    var p = ptrs.get(e.pointerId);
+    if (!p) return;
+    var r = stage.getBoundingClientRect(), k;
+    if (ptrs.size === 1) {
+      if (!dragging) {   // drobne drgnięcie palca to nadal stuknięcie w pinezkę
+        if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) < 7) return;
+        startDrag(); capture(e.pointerId);
+        p.x = e.clientX; p.y = e.clientY; lastT = e.timeStamp;
+        return;
+      }
+      var dx = e.clientX - p.x, dy = e.clientY - p.y;
+      p.x = e.clientX; p.y = e.clientY;
+      k = view.w / (r.width || 1);
+      var want = { x: view.x - dx * k, y: view.y - dy * k, w: view.w, h: view.h }, v = bound(want);
+      apply(v); target = v;
+      // na górnej i dolnej krawędzi mapy ruch palca przewija stronę, więc mapa nie blokuje przewijania
+      if (e.pointerType === 'touch') { var rest = (want.y - v.y) / k; if (Math.abs(rest) > .5) window.scrollBy(0, rest); }
+      var dt = Math.max(1, e.timeStamp - lastT); lastT = e.timeStamp;
+      vx = .75 * (dx / dt) + .25 * vx; vy = .75 * (dy / dt) + .25 * vy;
+    } else if (ptrs.size === 2) {
+      var o = null;
+      ptrs.forEach(function (q, id) { if (id !== e.pointerId) o = q; });
+      var d0 = Math.hypot(p.x - o.x, p.y - o.y), m0x = (p.x + o.x) / 2, m0y = (p.y + o.y) / 2;
+      p.x = e.clientX; p.y = e.clientY;
+      var d1 = Math.hypot(p.x - o.x, p.y - o.y), m1x = (p.x + o.x) / 2, m1y = (p.y + o.y) / 2;
+      var w = Math.max(MIN_W, Math.min(maxW(), view.w * d0 / Math.max(d1, 1))), h = w / aspect();
+      var ax = view.x + (m0x - r.left) / r.width * view.w, ay = view.y + (m0y - r.top) / r.height * view.h;  // punkt mapy między palcami
+      var nv = bound({ x: ax - (m1x - r.left) / r.width * w, y: ay - (m1y - r.top) / r.height * h, w: w, h: h });
+      apply(nv); target = nv;
+    }
+  });
+  function coast() {   // krótki wybieg po puszczeniu palca
+    var last = performance.now();
+    glide = requestAnimationFrame(function step(now) {
+      var dt = Math.min(40, now - last), k = view.w / (stage.clientWidth || 1); last = now;
+      var v = bound({ x: view.x - vx * dt * k, y: view.y - vy * dt * k, w: view.w, h: view.h });
+      apply(v); target = v;
+      var f = Math.pow(.92, dt / 16); vx *= f; vy *= f;
+      glide = Math.hypot(vx, vy) > .03 ? requestAnimationFrame(step) : 0;
+    });
+  }
+  function release(e) {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.delete(e.pointerId);
+    if (ptrs.size) { vx = vy = 0; return; }   // z dwóch palców został jeden: przesuwamy dalej bez skoku
+    svg.classList.remove('is-dragging');
+    if (dragging) {
+      swallow = Date.now() + 400;   // koniec przeciągania nie jest kliknięciem w pinezkę
+      if (!reduce && e.type === 'pointerup' && e.timeStamp - lastT < 90 && Math.hypot(vx, vy) > .2) coast();
+    }
+    dragging = false;
+  }
+  svg.addEventListener('pointerup', release);
+  svg.addEventListener('pointercancel', release);
+  svg.addEventListener('click', function (e) { if (Date.now() < swallow) { e.stopPropagation(); e.preventDefault(); } }, true);
+  svg.addEventListener('dblclick', function (e) {
+    var r = stage.getBoundingClientRect();
+    zoomBy(1.9, e.clientX - r.left, e.clientY - r.top, true);
+  });
+  svg.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey && !e.metaKey) return;   // zwykłe kółko zostaje dla przewijania strony
+    e.preventDefault();
+    var r = stage.getBoundingClientRect();
+    zoomBy(Math.exp(-Math.max(-30, Math.min(30, e.deltaY)) * .012), e.clientX - r.left, e.clientY - r.top, false);   // jeden ząbek kółka to najwyżej ok. 1,4×
+  }, { passive: false });
+  if (zoomIn) {
+    zoomIn.addEventListener('click', function () { zoomBy(1.7, stage.clientWidth / 2, stage.clientHeight / 2, true); });
+    zoomOut.addEventListener('click', function () { zoomBy(1 / 1.7, stage.clientWidth / 2, stage.clientHeight / 2, true); });
+  }
+
   /* ---------- start ---------- */
   setFilter('all', true);
-  function refit() { if (zoomed && current) focus(current, true); else overview(true); }
+  function refit() {
+    if (manual) { var v = bound(view); target = v; apply(v); }   // kadr ustawiony ręcznie zostaje
+    else if (zoomed && current) focus(current, true);
+    else overview(true);
+  }
   if ('ResizeObserver' in window) new ResizeObserver(refit).observe(stage); else window.addEventListener('resize', refit);
   mobile.addEventListener('change', function () { if (current) select(current); refit(); });
 
