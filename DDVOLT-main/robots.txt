@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ddvolt.com/sitemap.xml
