@@ -9,7 +9,7 @@ Generator nadpisze pliki *.html w katalogu głównym i w /en/.
 SITE_URL = 'https://ddvolt.com'          # adres produkcyjny (canonical, hreflang, sitemap, og:url)
 PHONE = '+48 664 607 603'
 PHONE_HREF = 'tel:+48664607603'
-EMAIL = 'kontakt@ddvolt.pl'
+EMAIL = 'ddvoltinfo@gmail.com'
 # Formularz: załóż konto na formspree.io i wklej tu adres formularza.
 # Dopóki zostaje 'TWOJ_ID', formularz otwiera program pocztowy z gotową wiadomością (mailto).
 FORM_ACTION = 'https://formspree.io/f/TWOJ_ID'

@@ -21,7 +21,7 @@ Wszystko poniżej zmienia się w `tools/content.py`, a potem `python3 tools/buil
 | Formularz | `FORM_ACTION` | Wklej adres z formspree.io. Dopóki jest `TWOJ_ID`, formularz otwiera program pocztowy z gotową wiadomością. |
 | Kraje z realizacjami | `COUNTRIES` | Są cztery: Niemcy, Włochy, Węgry, Polska. Dopisz pozostałe; liczba w statystykach przeliczy się sama. |
 | Liczby | `PROJECTS_COUNT`, `MAIN_PROJECT_MONTHS`, `ROBOTS` | 19+, 12 mies. (Tesla), 130 robotów. Potwierdź 12 miesięcy. |
-| E-mail | `EMAIL` | `kontakt@ddvolt.pl`. Sprawdź domenę (strona działa pod ddvolt.com). |
+| E-mail | `EMAIL` | `ddvoltinfo@gmail.com`. Sprawdź domenę (strona działa pod ddvolt.com). |
 | Adres strony | `SITE_URL` | `https://ddvolt.com` (canonical, hreflang, sitemap). |
 | Administrator danych | `T['pl']['privacy']` i `T['en']['privacy']` | W tekście jest znacznik „[uzupełnij: pełna nazwa, adres, NIP]”. |
 | Miasta dwóch projektów | `PROJECTS` → `microsoft`, `szkoly` | Mają `approx: True` (pusta pinezka podpisana „Niemcy”). Podaj miasto i współrzędne, usuń `approx`. |
