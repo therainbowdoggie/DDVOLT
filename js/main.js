@@ -526,4 +526,46 @@
         .catch(function () { busy(false); say(msg.fail, true); });
     });
   })();
+
+  /* ---------------------------------------------------- ukryta niespodzianka */
+  (function () {
+    var trig = $('[data-egg]');
+    if (!trig) return;
+    var n = 0, timer, box;
+    var song;
+    function stopSong() { if (song) { song.pause(); song.currentTime = 0; } }
+    function playSong() {
+      if (!song) song = new Audio(trig.getAttribute('data-egg').replace('egg.jpg', 'baby.mp3'));
+      song.loop = true;
+      song.currentTime = 0;
+      var p = song.play();
+      if (p && p.catch) p.catch(function () {});
+    }
+    function close() { if (box) { box.classList.remove('is-on'); html.classList.remove('egg-open'); } stopSong(); }
+    function open() {
+      if (!box) {
+        box = d.createElement('div');
+        box.className = 'egg';
+        box.setAttribute('role', 'dialog');
+        box.setAttribute('aria-modal', 'true');
+        box.setAttribute('aria-label', 'DD Volt');
+        var img = d.createElement('img');
+        img.src = trig.getAttribute('data-egg');
+        img.alt = '';
+        box.appendChild(img);
+        box.addEventListener('click', close);
+        d.body.appendChild(box);
+      }
+      html.classList.add('egg-open');
+      playSong();
+      requestAnimationFrame(function () { box.classList.add('is-on'); });
+    }
+    trig.addEventListener('click', function () {
+      n++;
+      clearTimeout(timer);
+      timer = setTimeout(function () { n = 0; }, 1500);
+      if (n >= 4) { n = 0; open(); }
+    });
+    d.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  })();
 })();

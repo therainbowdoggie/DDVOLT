@@ -563,7 +563,7 @@ def footer(lang, key, scripts=(), dock=True):
       </ul></div>
     </div>
     <div class="footer-bottom">
-      <span>© {C.YEAR} DD Volt designed by <a class=\"credit\" href=\"https://swagency.com.pl\" target=\"_blank\" rel=\"noopener\">SWAGency</a></span>
+      <span><span data-egg=\"{asset(lang, 'assets/egg.jpg')}\">© {C.YEAR} DD Volt</span> designed by <a class=\"credit\" href=\"https://swagency.com.pl\" target=\"_blank\" rel=\"noopener\">SWAGency</a></span>
       <ul>
         <li><a href="{href(lang, 'privacy')}">{esc(u['privacy'])}</a></li>
         <li><a href="{href(lang, 'cookies')}">{esc(u['cookies'])}</a></li>
