@@ -430,11 +430,11 @@ BOOT_JS = ("(function(){var d=document.documentElement;d.classList.remove('no-js
            "p=p==='jobs'?'fachowcy':p==='companies'?'firmy':p;"
            "var a=d.getAttribute('data-audience-lock')||(p==='fachowcy'||p==='firmy'?p:localStorage.getItem('dd-audience'));"
            "if(a==='fachowcy'||a==='firmy')d.setAttribute('data-audience',a);"
-           # animacja startowa: pierwsze wejście w sesji na dowolnej stronie; na stronie głównej także
-           # przy każdym odświeżeniu i wejściu spoza serwisu (nie przy klikaniu między podstronami)
+           # animacja startowa: pierwsze wejście w sesji na dowolnej stronie; na stronie głównej zawsze
+           # (wejście, kliknięcie w logo/Strona główna, odświeżenie), poza cofaniem/przód w historii
            "var again=false;if(d.hasAttribute('data-home')){var n=performance.getEntriesByType&&performance.getEntriesByType('navigation')[0],"
            "ty=n?n.type:'',r=document.referrer,inside=!!location.host&&r.indexOf(location.protocol+'//'+location.host+'/')===0;"
-           "again=ty==='reload'||(ty==='navigate'&&!inside);}"
+           "again=ty!=='back_forward';}"
            "if((again||!sessionStorage.getItem('dd-boot'))&&!matchMedia('(prefers-reduced-motion: reduce)').matches)d.classList.add('is-booting');"
            "}catch(e){}setTimeout(function(){if(!window.DDV_READY)d.classList.add('no-anim')},4500);})();")
 
@@ -514,7 +514,7 @@ def header(lang, key):
       <button class="menu-btn" type="button" aria-expanded="false" aria-controls="menu" aria-label="{attr(u['menu_open'])}" data-open="{attr(u['menu_open'])}" data-close="{attr(u['menu_close'])}"><span></span><span></span></button>
     </div>
   </div>
-  <div class="progress" aria-hidden="true"></div>
+  <div class="progress" aria-hidden="true"><svg class="progress-bolt" viewBox="0 0 64 96"><path d="{BOLT}"/></svg></div>
 </header>
 <div class="menu" id="menu" inert>
   <nav class="menu-nav" aria-label="{attr(u['menu_aria'])}">{mob}</nav>
@@ -563,7 +563,7 @@ def footer(lang, key, scripts=(), dock=True):
       </ul></div>
     </div>
     <div class="footer-bottom">
-      <span>© {C.YEAR} DD Volt</span>
+      <span>© {C.YEAR} DD Volt designed by <a class=\"credit\" href=\"https://swagency.com.pl\" target=\"_blank\" rel=\"noopener\">SWAGency</a></span>
       <ul>
         <li><a href="{href(lang, 'privacy')}">{esc(u['privacy'])}</a></li>
         <li><a href="{href(lang, 'cookies')}">{esc(u['cookies'])}</a></li>
